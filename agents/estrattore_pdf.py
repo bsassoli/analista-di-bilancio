@@ -177,12 +177,27 @@ def _ricognizione_documento(pdf_path: str, tipo_bilancio: str = "separato") -> d
     sp_selezionate = _seleziona_gruppo_prospetto(sp_pagine, tipo_bilancio, n_pagine)
     ce_selezionate = _seleziona_gruppo_prospetto(ce_pagine, tipo_bilancio, n_pagine)
 
+    # Identifica pagine NI (bassa densità numerica + keywords)
+    ni_pagine = []
+    kw_ni = ["nota integrativa", "criteri di valutazione", "principi contabili"]
+    for item in testi:
+        testo_lower = item["testo"].lower()
+        pagina_0based = item["pagina"] - 1
+        if any(kw in testo_lower for kw in kw_ni):
+            # Verifica bassa densità numerica (non è un prospetto)
+            lines = item["testo"].strip().split("\n")
+            numeri = re.findall(r'\b\d{1,3}(?:\.\d{3})+\b', item["testo"])
+            densita = len(numeri) / max(len(lines), 1)
+            if densita < 0.3:
+                ni_pagine.append(pagina_0based)
+
     return {
         "n_pagine": n_pagine,
         "formato_rilevato": formato,
         "tipo_bilancio": tipo_bilancio,
         "sp_pagine": sp_selezionate,
         "ce_pagine": ce_selezionate,
+        "ni_pagine": ni_pagine,
         "tutti_candidati": candidati,
     }
 
@@ -472,10 +487,11 @@ def estrai_pdf(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    pdf = sys.argv[1] if len(sys.argv) > 1 else (
-        "data/input/Relazione_finanziaria_al_bilancio_d_esercizio_al_31_dicembre_2024"
-        "_e_al_Bilancio_consolidato_al_31_dicembre_2024.pdf"
-    )
+    if len(sys.argv) < 2:
+        print("Uso: python -m agents.estrattore_pdf <pdf_path> [tipo_bilancio]")
+        sys.exit(1)
+
+    pdf = sys.argv[1]
     tipo = sys.argv[2] if len(sys.argv) > 2 else "separato"
 
     result = estrai_pdf(pdf, tipo)

@@ -617,20 +617,27 @@ def esegui_produzione(pipeline_result: dict, analisi: Optional[dict] = None) -> 
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Carica pipeline result
-    data_path = ROOT / "data" / "output" / "enervit_pipeline_result.json"
+    if len(sys.argv) < 2:
+        print("Uso: python -m agents.produttore <pipeline_result_json> [analisi_json]")
+        sys.exit(1)
+
+    data_path = Path(sys.argv[1])
+    if not data_path.exists():
+        print(f"[ERRORE] File non trovato: {data_path}")
+        sys.exit(1)
+
     print(f"Caricamento pipeline result da: {data_path}")
     pipeline_result = json.loads(data_path.read_text(encoding="utf-8"))
     print(f"Azienda: {pipeline_result['azienda']}")
 
-    # Prova a caricare analisi (se disponibile)
     analisi: Optional[dict] = None
-    analisi_path = ROOT / "data" / "output" / "enervit_analisi.json"
-    if analisi_path.exists():
-        print(f"Caricamento analisi da: {analisi_path}")
-        analisi = json.loads(analisi_path.read_text(encoding="utf-8"))
+    if len(sys.argv) > 2:
+        analisi_path = Path(sys.argv[2])
+        if analisi_path.exists():
+            print(f"Caricamento analisi da: {analisi_path}")
+            analisi = json.loads(analisi_path.read_text(encoding="utf-8"))
     else:
-        print("File analisi non trovato, generazione senza indici/narrative.")
+        print("Analisi non specificata, generazione senza indici/narrative.")
 
     # Genera output
     print("\n--- Generazione output ---")

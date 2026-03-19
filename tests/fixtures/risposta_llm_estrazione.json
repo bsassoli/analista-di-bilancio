@@ -1,0 +1,56 @@
+{
+  "azienda": "Test S.r.l.",
+  "formato_bilancio": "OIC_ordinario",
+  "anni_presenti": ["2024", "2023"],
+  "sezioni": {
+    "sp_attivo": {
+      "pagine": [3, 4],
+      "righe": [
+        {"label": "B) Immobilizzazioni", "valori": {}, "livello": "sezione", "genitore": null, "nota_ref": null},
+        {"label": "I - Immobilizzazioni immateriali", "valori": {"2024": "500.000", "2023": "600.000"}, "livello": "subtotale", "genitore": "Immobilizzazioni", "nota_ref": null},
+        {"label": "II - Immobilizzazioni materiali", "valori": {"2024": "3.000.000", "2023": "2.800.000"}, "livello": "subtotale", "genitore": "Immobilizzazioni", "nota_ref": null},
+        {"label": "III - Immobilizzazioni finanziarie", "valori": {"2024": "200.000", "2023": "150.000"}, "livello": "subtotale", "genitore": "Immobilizzazioni", "nota_ref": null},
+        {"label": "Totale immobilizzazioni", "valori": {"2024": "3.700.000", "2023": "3.550.000"}, "livello": "totale", "genitore": null, "nota_ref": null},
+        {"label": "C) Attivo circolante", "valori": {}, "livello": "sezione", "genitore": null, "nota_ref": null},
+        {"label": "I - Rimanenze", "valori": {"2024": "1.200.000", "2023": "1.100.000"}, "livello": "subtotale", "genitore": "Attivo circolante", "nota_ref": null},
+        {"label": "II - Crediti", "valori": {}, "livello": "sezione", "genitore": "Attivo circolante", "nota_ref": null},
+        {"label": "1) verso clienti", "valori": {"2024": "2.000.000", "2023": "1.800.000"}, "livello": "dettaglio", "genitore": "Crediti", "nota_ref": null},
+        {"label": "5-bis) crediti tributari", "valori": {"2024": "300.000", "2023": "250.000"}, "livello": "dettaglio", "genitore": "Crediti", "nota_ref": null},
+        {"label": "IV - Disponibilita liquide", "valori": {"2024": "800.000", "2023": "620.000"}, "livello": "subtotale", "genitore": "Attivo circolante", "nota_ref": null},
+        {"label": "Totale attivo", "valori": {"2024": "8.100.000", "2023": "7.400.000"}, "livello": "totale", "genitore": null, "nota_ref": null}
+      ]
+    },
+    "sp_passivo": {
+      "pagine": [4, 5],
+      "righe": [
+        {"label": "A) Patrimonio netto", "valori": {}, "livello": "sezione", "genitore": null, "nota_ref": null},
+        {"label": "I - Capitale", "valori": {"2024": "500.000", "2023": "500.000"}, "livello": "dettaglio", "genitore": "Patrimonio netto", "nota_ref": null},
+        {"label": "IV - Riserva legale", "valori": {"2024": "100.000", "2023": "100.000"}, "livello": "dettaglio", "genitore": "Patrimonio netto", "nota_ref": null},
+        {"label": "VII - Altre riserve", "valori": {"2024": "1.400.000", "2023": "1.200.000"}, "livello": "dettaglio", "genitore": "Patrimonio netto", "nota_ref": null},
+        {"label": "IX - Utile (perdita) dell'esercizio", "valori": {"2024": "400.000", "2023": "350.000"}, "livello": "dettaglio", "genitore": "Patrimonio netto", "nota_ref": null},
+        {"label": "Totale patrimonio netto", "valori": {"2024": "2.400.000", "2023": "2.150.000"}, "livello": "totale", "genitore": null, "nota_ref": null},
+        {"label": "D) Debiti", "valori": {}, "livello": "sezione", "genitore": null, "nota_ref": null},
+        {"label": "4) debiti verso banche", "valori": {"2024": "2.000.000", "2023": "2.200.000"}, "livello": "dettaglio", "genitore": "Debiti", "nota_ref": null},
+        {"label": "7) debiti verso fornitori", "valori": {"2024": "1.800.000", "2023": "1.600.000"}, "livello": "dettaglio", "genitore": "Debiti", "nota_ref": null},
+        {"label": "Totale passivo e patrimonio netto", "valori": {"2024": "8.100.000", "2023": "7.400.000"}, "livello": "totale", "genitore": null, "nota_ref": null}
+      ]
+    },
+    "ce": {
+      "pagine": [6],
+      "righe": [
+        {"label": "A) Valore della produzione", "valori": {}, "livello": "sezione", "genitore": null, "nota_ref": null},
+        {"label": "1) ricavi delle vendite e delle prestazioni", "valori": {"2024": "12.000.000", "2023": "11.000.000"}, "livello": "dettaglio", "genitore": "Valore della produzione", "nota_ref": null},
+        {"label": "5) altri ricavi e proventi", "valori": {"2024": "200.000", "2023": "150.000"}, "livello": "dettaglio", "genitore": "Valore della produzione", "nota_ref": null},
+        {"label": "Totale valore della produzione", "valori": {"2024": "12.200.000", "2023": "11.150.000"}, "livello": "totale", "genitore": null, "nota_ref": null},
+        {"label": "B) Costi della produzione", "valori": {}, "livello": "sezione", "genitore": null, "nota_ref": null},
+        {"label": "6) per materie prime", "valori": {"2024": "5.000.000", "2023": "4.500.000"}, "livello": "dettaglio", "genitore": "Costi della produzione", "nota_ref": null},
+        {"label": "7) per servizi", "valori": {"2024": "2.500.000", "2023": "2.300.000"}, "livello": "dettaglio", "genitore": "Costi della produzione", "nota_ref": null},
+        {"label": "9) per il personale", "valori": {"2024": "3.000.000", "2023": "2.800.000"}, "livello": "dettaglio", "genitore": "Costi della produzione", "nota_ref": null},
+        {"label": "10) ammortamenti e svalutazioni", "valori": {"2024": "800.000", "2023": "750.000"}, "livello": "dettaglio", "genitore": "Costi della produzione", "nota_ref": null}
+      ]
+    },
+    "rendiconto_finanziario": {"pagine": [], "righe": []}
+  },
+  "problemi_layout": [],
+  "confidence_estrazione": 0.92
+}

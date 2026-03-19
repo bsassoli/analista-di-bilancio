@@ -182,3 +182,84 @@ MAPPING_CE = {
     "D.19": "proventi_oneri_finanziari",  # svalutazioni
     "20": "imposte",
 }
+
+
+# --- Mapping IFRS → destinazione riclassificata ---
+# Pattern-based: chiave è un pattern da cercare nell'ID normalizzato della voce
+
+MAPPING_SP_IFRS = {
+    # Attivo — Capitale fisso netto
+    "totale_immobilizzazioni_materiali": ("attivo.capitale_fisso_netto.dettaglio", "immobilizzazioni_materiali_nette"),
+    "immobilizzazioni_materiali": ("attivo.capitale_fisso_netto.dettaglio", "immobilizzazioni_materiali_nette"),
+    "immobili_impianti_macchinari": ("attivo.capitale_fisso_netto.dettaglio", "immobilizzazioni_materiali_nette"),
+    "diritti_uso": ("attivo.capitale_fisso_netto.dettaglio", "immobilizzazioni_materiali_nette"),
+    "totale_immobilizzazioni_immateriali": ("attivo.capitale_fisso_netto.dettaglio", "immobilizzazioni_immateriali_nette"),
+    "immobilizzazioni_immateriali": ("attivo.capitale_fisso_netto.dettaglio", "immobilizzazioni_immateriali_nette"),
+    "avviamento": ("attivo.capitale_fisso_netto.dettaglio", "immobilizzazioni_immateriali_nette"),
+    "partecipazioni": ("attivo.capitale_fisso_netto.dettaglio", "immobilizzazioni_finanziarie"),
+    "crediti_finanziari_a_lungo": ("attivo.capitale_fisso_netto.dettaglio", "immobilizzazioni_finanziarie"),
+    "altri_crediti_finanziari_a_lungo": ("attivo.capitale_fisso_netto.dettaglio", "immobilizzazioni_finanziarie"),
+    # Attivo — CCON
+    "rimanenze": ("attivo.ccon.dettaglio", "rimanenze"),
+    "crediti_commerciali": ("attivo.ccon.dettaglio", "crediti_commerciali"),
+    "crediti_verso_clienti": ("attivo.ccon.dettaglio", "crediti_commerciali"),
+    "attivita_fiscali_per_imposte_correnti": ("attivo.ccon.dettaglio", "altri_crediti_operativi"),
+    "crediti_tributari": ("attivo.ccon.dettaglio", "altri_crediti_operativi"),
+    # Attivo — Altre attività
+    "attivita_fiscali_per_imposte_differite": ("attivo.altre_attivita_non_operative.dettaglio", "attivita_fiscali_differite"),
+    "imposte_anticipate": ("attivo.altre_attivita_non_operative.dettaglio", "attivita_fiscali_differite"),
+    "crediti_finanziari_a_breve": ("attivo.altre_attivita_non_operative.dettaglio", "crediti_finanziari"),
+    "altri_crediti_finanziari_a_breve": ("attivo.altre_attivita_non_operative.dettaglio", "crediti_finanziari"),
+    # Disponibilità liquide → PFN (sottratte)
+    "cassa_e_disponibilit": ("passivo.pfn.dettaglio", "disponibilita_liquide_sottratte"),
+    "disponibilita_liquide": ("passivo.pfn.dettaglio", "disponibilita_liquide_sottratte"),
+    # Passivo — PN
+    "totale_patrimonio_netto": ("passivo.patrimonio_netto", "totale"),
+    "capitale_emesso": ("passivo.patrimonio_netto.dettaglio", "capitale_sociale"),
+    "capitale_sociale": ("passivo.patrimonio_netto.dettaglio", "capitale_sociale"),
+    "utile_d_esercizio": ("passivo.patrimonio_netto.dettaglio", "utile_perdita_esercizio"),
+    # Passivo — PFN
+    "finanziamenti_a_lungo_termine": ("passivo.pfn.dettaglio", "debiti_finanziari_lungo"),
+    "debiti_verso_banche_lungo": ("passivo.pfn.dettaglio", "debiti_finanziari_lungo"),
+    "debiti_verso_banche_oltre": ("passivo.pfn.dettaglio", "debiti_finanziari_lungo"),
+    "finanziamenti_a_breve_termine": ("passivo.pfn.dettaglio", "debiti_finanziari_breve"),
+    "debiti_verso_banche_breve": ("passivo.pfn.dettaglio", "debiti_finanziari_breve"),
+    "debiti_verso_banche_entro": ("passivo.pfn.dettaglio", "debiti_finanziari_breve"),
+    "debiti_verso_altri_finanziatori": ("passivo.pfn.dettaglio", "debiti_finanziari_breve"),
+    # Passivo — Debiti operativi
+    "debiti_commerciali": ("passivo.debiti_operativi", "totale"),
+    "debiti_verso_fornitori": ("passivo.debiti_operativi", "totale"),
+    "passivita_fiscali": ("passivo.debiti_operativi", "totale"),
+    "debiti_tributari": ("passivo.debiti_operativi", "totale"),
+    "debiti_previdenziali": ("passivo.debiti_operativi", "totale"),
+    "tfr": ("passivo.debiti_operativi", "totale"),
+    "benefici_successivi": ("passivo.debiti_operativi", "totale"),
+    "altre_passivita": ("passivo.debiti_operativi", "totale"),
+    "fondi_rischi": ("passivo.debiti_operativi", "totale"),
+}
+
+MAPPING_CE_IFRS = {
+    "ricavi": "ricavi_netti",
+    "altri_ricavi": "ricavi_netti",
+    "variazione_nelle_rimanenze_di_prodotti": "ricavi_netti",
+    "materie_prime": "costi_materie_prime_merci",
+    "costi_materie_prime": "costi_materie_prime_merci",
+    "variazione_nelle_rimanenze_di_materie": "costi_materie_prime_merci",
+    "altri_costi_operativi": "costi_servizi_godimento",
+    "costi_servizi": "costi_servizi_godimento",
+    "costi_per_servizi": "costi_servizi_godimento",
+    "godimento_beni_terzi": "costi_servizi_godimento",
+    "costo_del_personale": "costi_personale",
+    "costi_personale": "costi_personale",
+    "ammortamenti": "ammortamenti_svalutazioni",
+    "accantonamenti_e_svalutazioni": "ammortamenti_svalutazioni",
+    "accantonamenti": "ammortamenti_svalutazioni",
+    "ricavi_finanziari": "proventi_oneri_finanziari",
+    "proventi_finanziari": "proventi_oneri_finanziari",
+    "costi_finanziari": "proventi_oneri_finanziari",
+    "oneri_finanziari": "proventi_oneri_finanziari",
+    "utili_perdite_su_cambi": "proventi_oneri_finanziari",
+    "utile_derivante_da_transizioni_in_valute": "proventi_oneri_finanziari",
+    "imposte_sul_reddito": "imposte",
+    "imposte": "imposte",
+}

@@ -266,3 +266,43 @@ Il criterio finanziario classifica le voci per **tempo di conversione in cassa**
 - Flag: `dato_stimato`
 - Nota: "Bilancio abbreviato — dettaglio non disponibile, assegnato a materiali"
 - Confidence penalizzata (−0.1)
+
+## Istruzioni per bilanci IFRS
+
+I bilanci IFRS usano label diverse dalla codifica civilistica OIC:
+- "Attività non correnti" (non "B) Immobilizzazioni")
+- "Attività correnti" (non "C) Attivo circolante")
+- "Passività non correnti" / "Passività correnti" (non "D) Debiti")
+- Le voci sono tipicamente aggregate con nomi espliciti (es. "Immobili, impianti e macchinari", "Diritti d'uso")
+
+### Mapping IFRS → schema riclassificato
+| Voce IFRS | Destinazione |
+|---|---|
+| Immobili, impianti e macchinari | CFN → Imm. materiali nette |
+| Diritti d'uso (IFRS 16) | CFN → Imm. materiali nette |
+| Avviamento | CFN → Imm. immateriali nette |
+| Altre attività immateriali | CFN → Imm. immateriali nette |
+| Partecipazioni in società collegate | CFN → Imm. finanziarie |
+| Crediti finanziari a lungo termine | CFN → Imm. finanziarie |
+| Rimanenze | CCON → Rimanenze |
+| Crediti commerciali e altre attività a breve | CCON → Crediti commerciali |
+| Attività fiscali per imposte correnti | CCON → Altri crediti operativi |
+| Attività fiscali per imposte differite | Altre att. → Att. fiscali differite |
+| Cassa e disponibilità liquide | PFN (sottratte) |
+| Finanziamenti a lungo termine | PFN → Debiti fin. lungo |
+| Finanziamenti a breve termine | PFN → Debiti fin. breve |
+| Debiti commerciali | Debiti operativi |
+| Passività fiscali | Debiti operativi |
+| Benefici post-cessazione rapporto | Debiti operativi |
+
+### Bilanci consolidati
+- **Avviamento (Goodwill)**: va in CFN → Immobilizzazioni immateriali nette
+- **Quota di pertinenza di terzi**: se presente come voce separata nel PN, includerla nel totale PN
+- **L'utile dichiarato** potrebbe essere "del gruppo" (esclusa quota terzi): verificare coerenza con il CE che include la quota terzi
+- **Rettifiche di consolidamento**: non impattano lo schema riclassificato, ma documentare se identificate
+
+### Annotazioni qualitative
+Se nel campo `annotazioni_voci` sono presenti suggerimenti dal modulo qualitativo (nota integrativa), usarli per:
+- Split di voci ambigue (es. "altri debiti" → parte finanziaria in PFN, parte operativa in debiti operativi)
+- Classificazione debiti per scadenza (entro/oltre → breve/lungo)
+- Natura dei fondi rischi (operativi vs finanziari)

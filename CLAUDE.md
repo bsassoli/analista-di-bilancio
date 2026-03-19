@@ -16,24 +16,40 @@ python -m pytest tests/ -v
 # Pipeline completa su un bilancio
 python main.py "data/input/nome_bilancio.pdf" "Nome Azienda"
 
-# Singoli step
+# Pipeline multi-anno (N PDF stessa azienda)
+python main.py --multi "data/input/2022.pdf" "data/input/2023.pdf" "data/input/2024.pdf" -- "Nome Azienda"
+
+# Singoli step (richiedono argomento path)
 python -m agents.estrattore_pdf "data/input/bilancio.pdf"
-python -m agents.estrattore_numerico
-python -m agents.pipeline
-python -m agents.analista
-python -m agents.produttore
+python -m agents.estrattore_qualitativo "data/input/bilancio.pdf"
+python -m agents.pipeline "data/output/schema.json"
+python -m agents.analista "data/output/pipeline_result.json"
+python -m agents.produttore "data/output/pipeline_result.json" "data/output/analisi.json"
 ```
 
 ## Architettura
 
-Pipeline lineare a 7 step: PDF → Estrattore PDF (LLM) → Estrattore numerico (det.) → Checker (det.) → Riclassificatore (LLM per OIC, det. per IFRS) → Analista (det. + LLM narrative) → Produttore (det.)
+Pipeline lineare a 8 step: PDF → Estrattore PDF (LLM) → Estrattore numerico (det.) → Estrattore qualitativo (LLM, nota integrativa) → Checker (det.) → Riclassificatore (LLM primario, det. fallback) → Analista (det. + LLM narrative) → Produttore (det.)
 
 3 livelli:
-- **L0** `main.py` — orchestratore
+- **L0** `main.py` — orchestratore (singolo PDF e multi-anno)
 - **L1** `agents/` — subagenti (base.py ha l'agent loop e il tool dispatch)
 - **L2** `tools/` — funzioni deterministiche testabili
 
 Gli `skills/*.md` sono il system prompt degli agenti. Migliorarli migliora il comportamento senza toccare codice.
+
+### Agenti
+- `estrattore_pdf.py` — 2 fasi: ricognizione deterministica pagine + parsing LLM
+- `estrattore_numerico.py` — normalizza valori stringa in interi
+- `estrattore_qualitativo.py` — estrae flags e annotazioni dalla nota integrativa
+- `pipeline.py` — checker + riclassificatore (LLM primario con retry, det. fallback)
+- `analista.py` — calcolo indici, trend, alert, narrative
+- `produttore.py` — genera Excel e Word
+- `orchestratore_multi.py` — processa N PDF, merge risultati, dedup anni
+
+### Tools registrati in base.py
+- `calcola_ccon`, `calcola_pfn` — aggregati SP (disponibili per skill_riclassifica)
+- `cerca_pattern_testo` — ricerca regex con contesto (per skill_estrazione_qualitativa)
 
 ## Convenzioni
 
@@ -50,8 +66,6 @@ Gli `skills/*.md` sono il system prompt degli agenti. Migliorarli migliora il co
 
 ## Limiti noti
 
-- Estrattore qualitativo (nota integrativa) non implementato
-- Multi-anno (N PDF separati) non implementato
-- Riclassificatore deterministico è Enervit-specific, quello LLM funziona per tutti
 - Bilanci abbreviati/micro non testati
-- Nessun test per gli agents (solo per tools)
+- Multi-anno testato solo con mock, non con PDF reali
+- Estrattore qualitativo: scope iniziale limitato a split voci, scadenze debiti, fondi rischi

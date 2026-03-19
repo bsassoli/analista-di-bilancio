@@ -659,7 +659,15 @@ def esegui_analisi(pipeline_result: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    data_path = ROOT / "data" / "output" / "enervit_pipeline_result.json"
+    if len(sys.argv) < 2:
+        print("Uso: python -m agents.analista <pipeline_result_json_path>")
+        sys.exit(1)
+
+    data_path = Path(sys.argv[1])
+    if not data_path.exists():
+        print(f"[ERRORE] File non trovato: {data_path}")
+        sys.exit(1)
+
     print(f"Caricamento dati da: {data_path}")
     pipeline_result = json.loads(data_path.read_text(encoding="utf-8"))
 
@@ -669,7 +677,9 @@ if __name__ == "__main__":
     analisi = esegui_analisi(pipeline_result)
 
     # Salva output
-    output_path = ROOT / "data" / "output" / "enervit_analisi.json"
+    azienda_nome = pipeline_result.get("azienda", "output")
+    nome_file = azienda_nome.lower().replace(" ", "_").replace(".", "")
+    output_path = ROOT / "data" / "output" / f"{nome_file}_analisi.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(analisi, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\nAnalisi salvata in: {output_path}")

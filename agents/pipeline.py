@@ -30,6 +30,8 @@ from tools.schema import (
     crea_ce_riclassificato_vuoto,
     MAPPING_SP,
     MAPPING_CE,
+    MAPPING_SP_IFRS,
+    MAPPING_CE_IFRS,
 )
 from agents.base import agent_loop
 
@@ -217,6 +219,7 @@ def _prepara_input_riclassifica(schema: dict, checker_report: dict) -> dict:
         "ce": schema.get("ce", []),
         "metadata": schema.get("metadata", {}),
         "flags_globali": schema.get("flags_globali", []),
+        "annotazioni_voci": schema.get("annotazioni_voci", []),
         "checker_report": {
             "severity_globale": checker_report.get("severity_globale", "ok"),
             "warnings": [
@@ -308,10 +311,10 @@ def _fuzzy_get(voci: dict, *patterns) -> int:
 
 
 def _riclassifica_deterministico(schema: dict, anno: str) -> dict:
-    """Riclassifica in modo deterministico quando le voci IFRS sono chiare.
+    """Riclassifica in modo deterministico con mapping format-agnostic.
 
-    Questa funzione gestisce il mapping diretto per bilanci IFRS di Enervit
-    e casi simili dove le label sono sufficientemente esplicite.
+    Funziona per bilanci OIC e IFRS usando fuzzy matching sui pattern
+    definiti in MAPPING_SP_IFRS e MAPPING_CE_IFRS.
     """
     sp = crea_sp_riclassificato_vuoto()
     ce = crea_ce_riclassificato_vuoto()
@@ -324,70 +327,108 @@ def _riclassifica_deterministico(schema: dict, anno: str) -> dict:
     ce_voci = {v["id"]: v.get("valore", {}).get(anno, 0) or 0
                for v in schema.get("ce", [])}
 
-    # --- SP ATTIVO ---
-    # Immobilizzazioni materiali nette (uso il totale se disponibile)
-    imm_mat = sp_voci.get("totale_immobilizzazioni_materiali", 0)
+    # --- SP: mapping via fuzzy_get con pattern multipli ---
+    # Immobilizzazioni materiali
+    imm_mat = _fuzzy_get(sp_voci,
+        "totale_immobilizzazioni_materiali", "immobilizzazioni_materiali",
+        "immobili_impianti", "b_ii",
+    )
     sp["attivo"]["capitale_fisso_netto"]["dettaglio"]["immobilizzazioni_materiali_nette"] = imm_mat
 
-    # Immobilizzazioni immateriali nette
-    imm_imm = sp_voci.get("totale_immobilizzazioni_immateriali", 0)
+    # Immobilizzazioni immateriali
+    imm_imm = _fuzzy_get(sp_voci,
+        "totale_immobilizzazioni_immateriali", "immobilizzazioni_immateriali",
+        "avviamento", "b_i",
+    )
     sp["attivo"]["capitale_fisso_netto"]["dettaglio"]["immobilizzazioni_immateriali_nette"] = imm_imm
 
-    # Immobilizzazioni finanziarie — partecipazioni + crediti finanziari lungo
-    partecipazioni = sp_voci.get("partecipazioni", 0)
-    crediti_fin_lt = sp_voci.get("altri_crediti_finanziari_a_lungo_termine", 0)
+    # Immobilizzazioni finanziarie
+    partecipazioni = _fuzzy_get(sp_voci, "partecipazioni")
+    crediti_fin_lt = _fuzzy_get(sp_voci,
+        "crediti_finanziari_a_lungo", "altri_crediti_finanziari_a_lungo",
+        "immobilizzazioni_finanziarie", "b_iii",
+    )
     imm_fin = partecipazioni + crediti_fin_lt
     sp["attivo"]["capitale_fisso_netto"]["dettaglio"]["immobilizzazioni_finanziarie"] = imm_fin
 
     cfn = imm_mat + imm_imm + imm_fin
     sp["attivo"]["capitale_fisso_netto"]["totale"] = cfn
 
-    # Crediti commerciali (include anche infragruppo commerciale)
-    crediti_comm = sp_voci.get(
-        "crediti_commerciali_e_altre_attività_a_breve_termine", 0
+    # Crediti commerciali
+    crediti_comm = _fuzzy_get(sp_voci,
+        "crediti_commerciali", "crediti_verso_clienti",
+        "crediti_commerciali_e_altre",
     )
-    crediti_comm_infra = sp_voci.get(
-        "crediti_commerciali_verso_società_controllate_collegate", 0
+    crediti_comm_infra = _fuzzy_get(sp_voci,
+        "crediti_commerciali_verso_societ",
+        "crediti_verso_controllate",
     )
     crediti_comm_tot = crediti_comm + crediti_comm_infra
     sp["attivo"]["ccon"]["dettaglio"]["crediti_commerciali"] = crediti_comm_tot
 
     # Rimanenze
-    rimanenze = sp_voci.get("rimanenze", 0)
+    rimanenze = _fuzzy_get(sp_voci, "rimanenze")
     sp["attivo"]["ccon"]["dettaglio"]["rimanenze"] = rimanenze
 
-    # Altri crediti operativi — imposte correnti attive
-    att_fiscali_correnti = sp_voci.get("attività_fiscali_per_imposte_correnti", 0)
-    sp["attivo"]["ccon"]["dettaglio"]["altri_crediti_operativi"] = att_fiscali_correnti
+    # Altri crediti operativi
+    att_fiscali_correnti = _fuzzy_get(sp_voci,
+        "attivit_fiscali_per_imposte_correnti", "attivita_fiscali_per_imposte_correnti",
+        "crediti_tributari", "crediti_verso_erario",
+    )
+    altri_crediti_op = _fuzzy_get(sp_voci,
+        "altri_crediti_operativi", "crediti_verso_altri",
+    )
+    tot_altri_crediti = att_fiscali_correnti + altri_crediti_op
+    sp["attivo"]["ccon"]["dettaglio"]["altri_crediti_operativi"] = tot_altri_crediti
 
     # Altre attività non operative
-    att_fiscali_diff = sp_voci.get("attività_fiscali_per_imposte_differite", 0)
-    crediti_fin_bt = sp_voci.get("altri_crediti_finanziari_a_breve_termine", 0)
+    att_fiscali_diff = _fuzzy_get(sp_voci,
+        "attivit_fiscali_per_imposte_differite", "attivita_fiscali_per_imposte_differite",
+        "imposte_anticipate",
+    )
+    crediti_fin_bt = _fuzzy_get(sp_voci,
+        "crediti_finanziari_a_breve", "altri_crediti_finanziari_a_breve",
+    )
     sp["attivo"]["altre_attivita_non_operative"]["dettaglio"]["attivita_fiscali_differite"] = att_fiscali_diff
     sp["attivo"]["altre_attivita_non_operative"]["dettaglio"]["crediti_finanziari"] = crediti_fin_bt
     sp["attivo"]["altre_attivita_non_operative"]["totale"] = att_fiscali_diff + crediti_fin_bt
 
-    # Disponibilità liquide (entrano in PFN come sottratte)
-    cassa = sp_voci.get("cassa_e_disponibilità_liquide", 0)
+    # Disponibilità liquide
+    cassa = _fuzzy_get(sp_voci,
+        "cassa_e_disponibilit", "disponibilita_liquide", "disponibilit_liquide",
+    )
 
     # --- SP PASSIVO ---
     # Patrimonio Netto
-    pn_totale = sp_voci.get("totale_patrimonio_netto", 0)
-    capitale = sp_voci.get("capitale_emesso", 0)
-    utile_es = sp_voci.get("utile_d_esercizio", 0)
-    riserve = pn_totale - capitale - utile_es
+    pn_totale = _fuzzy_get(sp_voci,
+        "totale_patrimonio_netto", "patrimonio_netto",
+    )
+    capitale = _fuzzy_get(sp_voci,
+        "capitale_emesso", "capitale_sociale", "capitale",
+    )
+    utile_es = _fuzzy_get(sp_voci,
+        "utile_d_esercizio", "utile_perdita_esercizio",
+        "utile_dell_esercizio",
+    )
+    riserve = pn_totale - capitale - utile_es if pn_totale else 0
     sp["passivo"]["patrimonio_netto"]["totale"] = pn_totale
     sp["passivo"]["patrimonio_netto"]["dettaglio"]["capitale_sociale"] = capitale
     sp["passivo"]["patrimonio_netto"]["dettaglio"]["riserve"] = riserve
     sp["passivo"]["patrimonio_netto"]["dettaglio"]["utile_perdita_esercizio"] = utile_es
 
-    # Debiti finanziari lungo (finanziamenti LT)
-    fin_lt = sp_voci.get("finanziamenti_a_lungo_termine", 0)
+    # Debiti finanziari lungo
+    fin_lt = _fuzzy_get(sp_voci,
+        "finanziamenti_a_lungo_termine", "debiti_verso_banche_lungo",
+        "debiti_verso_banche_oltre",
+    )
     sp["passivo"]["pfn"]["dettaglio"]["debiti_finanziari_lungo"] = fin_lt
 
-    # Debiti finanziari breve (finanziamenti BT + debiti vs altri finanziatori)
-    fin_bt = sp_voci.get("finanziamenti_a_breve_termine", 0)
-    deb_altri_fin = sp_voci.get("debiti_verso_altri_finanziatori", 0)
+    # Debiti finanziari breve
+    fin_bt = _fuzzy_get(sp_voci,
+        "finanziamenti_a_breve_termine", "debiti_verso_banche_breve",
+        "debiti_verso_banche_entro",
+    )
+    deb_altri_fin = _fuzzy_get(sp_voci, "debiti_verso_altri_finanziatori")
     sp["passivo"]["pfn"]["dettaglio"]["debiti_finanziari_breve"] = fin_bt + deb_altri_fin
 
     # Disponibilità liquide sottratte
@@ -396,32 +437,39 @@ def _riclassifica_deterministico(schema: dict, anno: str) -> dict:
     pfn = calcola_pfn(fin_lt, fin_bt + deb_altri_fin, cassa)
     sp["passivo"]["pfn"]["totale"] = pfn
 
-    # Debiti operativi — debiti commerciali + infragruppo comm. + fiscali + TFR + altre passività
-    deb_comm = sp_voci.get(
-        "debiti_commerciali_e_altre_passività_a_breve_termine", 0
+    # Debiti operativi
+    deb_comm = _fuzzy_get(sp_voci,
+        "debiti_commerciali", "debiti_verso_fornitori",
+        "debiti_commerciali_e_altre_passivit",
     )
-    deb_comm_infra = sp_voci.get(
-        "debiti_commerciali_verso_società_controllate_collegate", 0
+    deb_comm_infra = _fuzzy_get(sp_voci,
+        "debiti_commerciali_verso_societ",
+        "debiti_verso_controllate",
     )
-    deb_fiscali = sp_voci.get("passività_fiscali_per_imposte_correnti", 0)
-    tfr = sp_voci.get(
-        "benefici_successivi_alla_cessazione_del_rapporto_di_lavoro", 0
+    deb_fiscali = _fuzzy_get(sp_voci,
+        "passivit_fiscali", "passivita_fiscali",
+        "debiti_tributari",
     )
-    altre_pass_lt = sp_voci.get("altre_passività_a_lungo_termine", 0)
+    tfr = _fuzzy_get(sp_voci,
+        "tfr", "benefici_successivi", "trattamento_fine_rapporto",
+    )
+    altre_pass = _fuzzy_get(sp_voci,
+        "altre_passivit", "altre_passivita", "altri_debiti",
+        "fondi_rischi",
+    )
 
-    debiti_operativi = deb_comm + deb_comm_infra + deb_fiscali + tfr + altre_pass_lt
+    debiti_operativi = deb_comm + deb_comm_infra + deb_fiscali + tfr + altre_pass
     sp["passivo"]["debiti_operativi"]["totale"] = debiti_operativi
 
     # CCON
-    ccon = calcola_ccon(crediti_comm_tot, rimanenze, att_fiscali_correnti, debiti_operativi)
+    ccon = calcola_ccon(crediti_comm_tot, rimanenze, tot_altri_crediti, debiti_operativi)
     sp["attivo"]["ccon"]["dettaglio"]["debiti_operativi_sottratti"] = debiti_operativi
     sp["attivo"]["ccon"]["totale"] = ccon
 
     # Quadratura SP
-    # Totale attivo = CFN + attività CCON lorde + altre attività + cassa
     totale_attivo_calc = (
         cfn
-        + crediti_comm_tot + rimanenze + att_fiscali_correnti
+        + crediti_comm_tot + rimanenze + tot_altri_crediti
         + att_fiscali_diff + crediti_fin_bt
         + cassa
     )
@@ -429,9 +477,7 @@ def _riclassifica_deterministico(schema: dict, anno: str) -> dict:
     quad = verifica_quadratura(totale_attivo_calc, totale_passivo_calc)
     sp["quadratura"] = quad
 
-    # Se non quadra, annotiamo
     if not quad["ok"]:
-        # Usiamo i totali dichiarati dal bilancio come riferimento
         tot_att_dich = schema.get("metadata", {}).get(
             "totale_attivo_dichiarato", {}
         ).get(anno, 0)
@@ -444,90 +490,92 @@ def _riclassifica_deterministico(schema: dict, anno: str) -> dict:
         )
 
     # --- CE ---
-    ricavi = _fuzzy_get(ce_voci, "ricavi")
+    ricavi = _fuzzy_get(ce_voci,
+        "ricavi_vendite_prestazioni", "ricavi_delle_vendite", "ricavi",
+    )
     altri_ricavi = _fuzzy_get(ce_voci, "altri_ricavi_e_proventi", "altri_ricavi")
     var_rim_pf = _fuzzy_get(ce_voci,
-        "variazione_nelle_rimanenze_di_prodotti_finiti",
+        "variazione_nelle_rimanenze_di_prodotti",
         "variazione_rimanenze_prodotti",
     )
     ce["ricavi_netti"] = ricavi + altri_ricavi + var_rim_pf
 
     materie_prime = _fuzzy_get(ce_voci,
-        "materie_prime_materiali_di_confezionamento",
-        "materie_prime",
-        "costi_materie_prime",
+        "per_materie_prime", "costi_materie_prime",
+        "materie_prime_materiali", "materie_prime",
     )
     var_rim_mp = _fuzzy_get(ce_voci,
-        "variazione_nelle_rimanenze_di_materie_prime",
+        "variazione_nelle_rimanenze_di_materie",
         "variazione_rimanenze_materie",
     )
     ce["costi_materie_prime_merci"] = materie_prime + var_rim_mp
 
-    # Valore aggiunto industriale = ricavi netti + costi materie prime (negativo)
     ce["valore_aggiunto_industriale"] = ce["ricavi_netti"] + ce["costi_materie_prime_merci"]
 
-    # "altri costi operativi" nel CE IFRS include servizi + godimento + oneri diversi
-    altri_costi_op = _fuzzy_get(ce_voci, "altri_costi_operativi", "costi_servizi")
-    ce["costi_servizi_godimento"] = altri_costi_op
+    costi_servizi = _fuzzy_get(ce_voci,
+        "altri_costi_operativi", "per_servizi", "costi_servizi",
+        "costi_per_servizi",
+    )
+    godimento = _fuzzy_get(ce_voci, "godimento_beni_terzi", "per_godimento")
+    oneri_diversi = _fuzzy_get(ce_voci, "oneri_diversi_di_gestione")
+    ce["costi_servizi_godimento"] = costi_servizi + godimento + oneri_diversi
 
-    costo_personale = _fuzzy_get(ce_voci, "costo_del_personale", "costi_personale")
+    costo_personale = _fuzzy_get(ce_voci,
+        "costo_del_personale", "per_il_personale",
+        "costi_personale", "costi_del_personale",
+    )
     ce["costi_personale"] = costo_personale
 
-    # EBITDA
     ce["ebitda"] = (
         ce["valore_aggiunto_industriale"]
         + ce["costi_servizi_godimento"]
         + ce["costi_personale"]
     )
 
-    # Ammortamenti e svalutazioni
-    ammortamenti = _fuzzy_get(ce_voci, "ammortamenti")
+    ammortamenti = _fuzzy_get(ce_voci,
+        "ammortamenti_e_svalutazioni", "ammortamenti",
+    )
     accantonamenti_sval = _fuzzy_get(ce_voci, "accantonamenti_e_svalutazioni", "accantonamenti")
     ce["ammortamenti_svalutazioni"] = ammortamenti + accantonamenti_sval
 
-    # EBIT
     ce["ebit"] = ce["ebitda"] + ce["ammortamenti_svalutazioni"]
 
-    # Proventi/oneri finanziari
     ricavi_fin = _fuzzy_get(ce_voci, "ricavi_finanziari", "proventi_finanziari")
     costi_fin = _fuzzy_get(ce_voci, "costi_finanziari", "oneri_finanziari")
-    cambi = _fuzzy_get(ce_voci, "utile_derivante_da_transizioni_in_valute", "utili_perdite_su_cambi")
+    cambi = _fuzzy_get(ce_voci,
+        "utile_derivante_da_transizioni_in_valute",
+        "utili_perdite_su_cambi",
+    )
     ce["proventi_oneri_finanziari"] = ricavi_fin + costi_fin + cambi
 
-    # EBT
     ce["ebt"] = ce["ebit"] + ce["proventi_oneri_finanziari"]
 
-    # Imposte
     imposte = _fuzzy_get(ce_voci, "imposte_sul_reddito", "imposte")
     ce["imposte"] = imposte
 
-    # Utile netto
     ce["utile_netto"] = ce["ebt"] + ce["imposte"]
 
-    # Verifica coerenza con EBITDA dichiarato
-    ebitda_dichiarato = ce_voci.get("ebitda_margine_operativo_lordo", 0)
+    # Verifiche coerenza
+    ebitda_dichiarato = _fuzzy_get(ce_voci, "ebitda_margine_operativo_lordo", "ebitda")
     if ebitda_dichiarato != 0 and abs(ce["ebitda"] - ebitda_dichiarato) > 1:
         deviazioni.append(
             f"EBITDA calcolato ({ce['ebitda']:,}) vs dichiarato ({ebitda_dichiarato:,}), "
             f"delta: {ce['ebitda'] - ebitda_dichiarato:,}"
         )
 
-    # Verifica coerenza con EBIT dichiarato
-    ebit_dichiarato = ce_voci.get("ebit_risultato_operativo", 0)
+    ebit_dichiarato = _fuzzy_get(ce_voci, "ebit_risultato_operativo")
     if ebit_dichiarato != 0 and abs(ce["ebit"] - ebit_dichiarato) > 1:
         deviazioni.append(
             f"EBIT calcolato ({ce['ebit']:,}) vs dichiarato ({ebit_dichiarato:,}), "
             f"delta: {ce['ebit'] - ebit_dichiarato:,}"
         )
 
-    # Verifica utile netto vs dichiarato
     utile_dich = schema.get("metadata", {}).get("utile_dichiarato", {}).get(anno, 0)
     if utile_dich and abs(ce["utile_netto"] - utile_dich) > 1:
         deviazioni.append(
             f"Utile netto calcolato ({ce['utile_netto']:,}) vs dichiarato ({utile_dich:,})"
         )
 
-    # Confidence
     n_deviazioni = len(deviazioni)
     n_non_mappate = len(voci_non_mappate)
     confidence = 1.0 - (n_deviazioni * 0.05) - (n_non_mappate * 0.1)
@@ -545,12 +593,62 @@ def _riclassifica_deterministico(schema: dict, anno: str) -> dict:
     }
 
 
+def _verifica_quadratura_risultato(risultati_per_anno: dict) -> list[str]:
+    """Verifica la quadratura SP dei risultati riclassificati.
+
+    Returns:
+        Lista di errori trovati (vuota se tutto ok).
+    """
+    errori = []
+    for anno, res in risultati_per_anno.items():
+        sp = res.get("sp_riclassificato", {})
+        quad = sp.get("quadratura", {})
+        if not quad.get("ok", False):
+            delta = quad.get("delta", 0)
+            errori.append(
+                f"Anno {anno}: SP non quadra, delta={delta:,}€ "
+                f"(attivo={quad.get('totale_attivo', 0):,}, "
+                f"passivo={quad.get('totale_passivo', 0):,})"
+            )
+    return errori
+
+
+def _retry_riclassifica_con_feedback(
+    schema: dict,
+    checker_report: dict,
+    risultato_precedente: dict,
+    errori: list[str],
+) -> dict:
+    """Ritenta la riclassifica LLM con feedback sugli errori."""
+    task_input = _prepara_input_riclassifica(schema, checker_report)
+    task_input["retry"] = True
+    task_input["risultato_precedente"] = risultato_precedente
+    task_input["errori_da_correggere"] = errori
+    task_input["istruzioni"] += (
+        "\n\nATTENZIONE: il tentativo precedente aveva errori. "
+        "Correggi i seguenti problemi:\n"
+        + "\n".join(f"- {e}" for e in errori)
+        + "\nVerifica attentamente la quadratura SP prima di rispondere."
+    )
+
+    try:
+        risultato = agent_loop(
+            nome_agente="skill_riclassifica",
+            task_input=task_input,
+            max_turns=15,
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+    return risultato
+
+
 def esegui_riclassifica(schema: dict, checker_report: dict) -> dict:
     """Esegue la riclassificazione.
 
-    Per bilanci IFRS con voci chiare, usa il mapping deterministico.
-    Per bilanci ambigui o con voci non standard, invoca il LLM
-    tramite agent_loop con skill_riclassifica come system prompt.
+    Strategia: LLM sempre come path primario per tutti i formati.
+    Se la quadratura fallisce, ritenta con feedback.
+    Fallback a deterministico solo se LLM fallisce completamente.
 
     Args:
         schema: Schema normalizzato JSON.
@@ -563,55 +661,57 @@ def esegui_riclassifica(schema: dict, checker_report: dict) -> dict:
     azienda = schema.get("azienda", "sconosciuta")
     formato = schema.get("metadata", {}).get("formato", "")
 
-    # Strategia:
-    # - Formato OIC → sempre LLM (le voci civilistiche richiedono interpretazione)
-    # - Formato IFRS → deterministico se le voci matchano i pattern noti, LLM altrimenti
-    # - Fallback a deterministico se LLM fallisce
-    usa_llm = formato != "IFRS"  # OIC e formati sconosciuti → LLM
-
-    if not usa_llm:
-        # Anche per IFRS, se ci sono troppe voci ambigue → LLM
-        voci_ambigue = sum(
-            1 for sez in ("sp", "ce") for v in schema.get(sez, [])
-            if v.get("non_standard") or "voce_non_standard" in v.get("flags", [])
-        )
-        if voci_ambigue > 3:
-            usa_llm = True
-
     risultati_per_anno: dict[str, Any] = {}
+    metodo = "llm"
 
-    if usa_llm:
-        print(f"  Metodo: LLM (formato {formato})")
-        task_input = _prepara_input_riclassifica(schema, checker_report)
+    # --- Tentativo 1: LLM (sempre primario) ---
+    print(f"  Metodo: LLM (formato {formato})")
+    task_input = _prepara_input_riclassifica(schema, checker_report)
 
-        try:
-            risultato_llm = agent_loop(
-                nome_agente="skill_riclassifica",
-                task_input=task_input,
-                max_turns=15,
+    try:
+        risultato_llm = agent_loop(
+            nome_agente="skill_riclassifica",
+            task_input=task_input,
+            max_turns=15,
+        )
+    except Exception as e:
+        print(f"[WARN] LLM riclassifica exception: {e}. Fallback deterministico.")
+        risultato_llm = {"error": str(e)}
+
+    if "error" not in risultato_llm:
+        risultati_per_anno = _estrai_risultati_llm(risultato_llm, anni)
+
+    # --- Tentativo 2: Retry con feedback se quadratura fallisce ---
+    if risultati_per_anno:
+        errori_quad = _verifica_quadratura_risultato(risultati_per_anno)
+        if errori_quad:
+            print(f"  [RETRY] Quadratura fallita, ritento con feedback...")
+            risultato_retry = _retry_riclassifica_con_feedback(
+                schema, checker_report, risultato_llm, errori_quad,
             )
-        except Exception as e:
-            print(f"[WARN] LLM riclassifica exception: {e}. Fallback deterministico.")
-            risultato_llm = {"error": str(e)}
+            if "error" not in risultato_retry:
+                risultati_retry = _estrai_risultati_llm(risultato_retry, anni)
+                if risultati_retry:
+                    errori_retry = _verifica_quadratura_risultato(risultati_retry)
+                    if not errori_retry or len(errori_retry) < len(errori_quad):
+                        risultati_per_anno = risultati_retry
+                        print(f"  [RETRY] Risultato migliorato.")
+                    else:
+                        print(f"  [RETRY] Nessun miglioramento, uso risultato originale.")
+    else:
+        if "error" not in risultato_llm:
+            print("[WARN] Risposta LLM non parsabile.")
 
-        if "error" in risultato_llm:
-            print(f"[WARN] LLM riclassifica fallito: {risultato_llm.get('error')}. Fallback.")
-            usa_llm = False
-        else:
-            # Estrai risultati_per_anno dalla risposta LLM
-            risultati_per_anno = _estrai_risultati_llm(risultato_llm, anni)
-            if not risultati_per_anno:
-                print("[WARN] Risposta LLM non parsabile. Fallback deterministico.")
-                usa_llm = False
-
-    if not usa_llm or not risultati_per_anno:
-        # Mapping deterministico per anno
+    # --- Fallback: deterministico ---
+    if not risultati_per_anno:
+        print(f"  [FALLBACK] Uso riclassifica deterministica.")
+        metodo = "deterministico"
         for anno in anni:
             risultati_per_anno[anno] = _riclassifica_deterministico(schema, anno)
 
     return {
         "azienda": azienda,
-        "metodo": "llm" if usa_llm and risultati_per_anno else "deterministico",
+        "metodo": metodo,
         "risultati_per_anno": risultati_per_anno,
     }
 
@@ -932,9 +1032,11 @@ def esegui_pipeline(schema: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Carica schema normalizzato Enervit
-    schema_path = ROOT / "data" / "output" / "enervit_schema_normalizzato.json"
+    if len(sys.argv) < 2:
+        print("Uso: python -m agents.pipeline <schema_json_path>")
+        sys.exit(1)
 
+    schema_path = Path(sys.argv[1])
     if not schema_path.exists():
         print(f"[ERRORE] File non trovato: {schema_path}")
         sys.exit(1)
@@ -947,11 +1049,11 @@ if __name__ == "__main__":
     print(f"Formato: {schema.get('metadata', {}).get('formato', 'N/A')}")
     print(f"Voci SP: {len(schema.get('sp', []))}, Voci CE: {len(schema.get('ce', []))}")
 
-    # Esegui pipeline completa
     risultato = esegui_pipeline(schema)
 
-    # Salva risultato
-    output_path = ROOT / "data" / "output" / "enervit_pipeline_result.json"
+    azienda = schema.get("azienda", "output")
+    nome_file = azienda.lower().replace(" ", "_").replace(".", "")
+    output_path = ROOT / "data" / "output" / f"{nome_file}_pipeline_result.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(risultato, f, indent=2, ensure_ascii=False)

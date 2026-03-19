@@ -167,6 +167,30 @@ def normalizza_numero(stringa: str) -> int | None:
     return -valore if negativo else valore
 
 
+def cerca_pattern_testo(testo: str, patterns: list[str]) -> list[dict]:
+    """Cerca pattern regex nel testo e restituisce i match con contesto.
+
+    Args:
+        testo: Testo in cui cercare.
+        patterns: Lista di pattern regex.
+
+    Returns:
+        Lista di dict con: pattern, match, contesto (±100 chars), posizione.
+    """
+    risultati = []
+    for pattern in patterns:
+        for m in re.finditer(pattern, testo, re.IGNORECASE):
+            start = max(0, m.start() - 100)
+            end = min(len(testo), m.end() + 100)
+            risultati.append({
+                "pattern": pattern,
+                "match": m.group(),
+                "contesto": testo[start:end],
+                "posizione": m.start(),
+            })
+    return risultati
+
+
 def genera_id(label: str) -> str:
     """Genera un ID normalizzato da una label di voce di bilancio.
 

@@ -1,0 +1,156 @@
+{
+  "risultati_per_anno": {
+    "2024": {
+      "anno": "2024",
+      "sp_riclassificato": {
+        "attivo": {
+          "capitale_fisso_netto": {
+            "totale": 3700000,
+            "dettaglio": {
+              "immobilizzazioni_materiali_nette": 3000000,
+              "immobilizzazioni_immateriali_nette": 500000,
+              "immobilizzazioni_finanziarie": 200000
+            }
+          },
+          "ccon": {
+            "totale": 1000000,
+            "dettaglio": {
+              "crediti_commerciali": 2000000,
+              "rimanenze": 1200000,
+              "altri_crediti_operativi": 300000,
+              "debiti_operativi_sottratti": 2500000
+            }
+          },
+          "altre_attivita_non_operative": {
+            "totale": 100000,
+            "dettaglio": {
+              "crediti_finanziari": 0,
+              "attivita_fiscali_differite": 100000
+            }
+          }
+        },
+        "passivo": {
+          "patrimonio_netto": {
+            "totale": 2400000,
+            "dettaglio": {
+              "capitale_sociale": 500000,
+              "riserve": 1500000,
+              "utile_perdita_esercizio": 400000
+            }
+          },
+          "pfn": {
+            "totale": 1200000,
+            "dettaglio": {
+              "debiti_finanziari_lungo": 1500000,
+              "debiti_finanziari_breve": 500000,
+              "disponibilita_liquide_sottratte": 800000
+            }
+          },
+          "debiti_operativi": {
+            "totale": 2500000,
+            "nota": "Alimentano CCON, qui per quadratura"
+          }
+        },
+        "quadratura": {
+          "totale_attivo": 8100000,
+          "totale_passivo": 8100000,
+          "delta": 0,
+          "ok": true
+        }
+      },
+      "ce_riclassificato": {
+        "ricavi_netti": 12200000,
+        "costi_materie_prime_merci": -5000000,
+        "valore_aggiunto_industriale": 7200000,
+        "costi_servizi_godimento": -2500000,
+        "costi_personale": -3000000,
+        "ebitda": 1700000,
+        "ammortamenti_svalutazioni": -800000,
+        "ebit": 900000,
+        "proventi_oneri_finanziari": -100000,
+        "ebt": 800000,
+        "imposte": -200000,
+        "utile_netto": 400000
+      },
+      "deviazioni": [],
+      "voci_non_mappate": [],
+      "confidence": 0.95
+    },
+    "2023": {
+      "anno": "2023",
+      "sp_riclassificato": {
+        "attivo": {
+          "capitale_fisso_netto": {
+            "totale": 3550000,
+            "dettaglio": {
+              "immobilizzazioni_materiali_nette": 2800000,
+              "immobilizzazioni_immateriali_nette": 600000,
+              "immobilizzazioni_finanziarie": 150000
+            }
+          },
+          "ccon": {
+            "totale": 950000,
+            "dettaglio": {
+              "crediti_commerciali": 1800000,
+              "rimanenze": 1100000,
+              "altri_crediti_operativi": 250000,
+              "debiti_operativi_sottratti": 2200000
+            }
+          },
+          "altre_attivita_non_operative": {
+            "totale": 80000,
+            "dettaglio": {
+              "crediti_finanziari": 0,
+              "attivita_fiscali_differite": 80000
+            }
+          }
+        },
+        "passivo": {
+          "patrimonio_netto": {
+            "totale": 2150000,
+            "dettaglio": {
+              "capitale_sociale": 500000,
+              "riserve": 1300000,
+              "utile_perdita_esercizio": 350000
+            }
+          },
+          "pfn": {
+            "totale": 1580000,
+            "dettaglio": {
+              "debiti_finanziari_lungo": 1800000,
+              "debiti_finanziari_breve": 400000,
+              "disponibilita_liquide_sottratte": 620000
+            }
+          },
+          "debiti_operativi": {
+            "totale": 2200000,
+            "nota": "Alimentano CCON, qui per quadratura"
+          }
+        },
+        "quadratura": {
+          "totale_attivo": 7400000,
+          "totale_passivo": 7400000,
+          "delta": 0,
+          "ok": true
+        }
+      },
+      "ce_riclassificato": {
+        "ricavi_netti": 11150000,
+        "costi_materie_prime_merci": -4500000,
+        "valore_aggiunto_industriale": 6650000,
+        "costi_servizi_godimento": -2300000,
+        "costi_personale": -2800000,
+        "ebitda": 1550000,
+        "ammortamenti_svalutazioni": -750000,
+        "ebit": 800000,
+        "proventi_oneri_finanziari": -100000,
+        "ebt": 700000,
+        "imposte": -180000,
+        "utile_netto": 350000
+      },
+      "deviazioni": [],
+      "voci_non_mappate": [],
+      "confidence": 0.93
+    }
+  }
+}

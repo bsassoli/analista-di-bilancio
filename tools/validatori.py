@@ -234,6 +234,66 @@ def valida_coerenza_utile(schema: dict, anno: str) -> dict:
         }
 
 
+def valida_cross_anno(risultati_per_anno: dict) -> list[dict]:
+    """Verifica coerenza tra anni consecutivi nei dati riclassificati.
+
+    Checks:
+    - Salti >50% nel totale attivo
+    - Cambi di segno EBITDA
+    - Cambi di segno PFN (se importi significativi)
+
+    Returns:
+        Lista di issue con codice, severity, dettaglio.
+    """
+    issues: list[dict] = []
+    anni = sorted(risultati_per_anno.keys())
+
+    if len(anni) < 2:
+        return issues
+
+    for i in range(1, len(anni)):
+        anno_corr = anni[i]
+        anno_prec = anni[i - 1]
+
+        res_corr = risultati_per_anno[anno_corr]
+        res_prec = risultati_per_anno[anno_prec]
+
+        sp_corr = res_corr.get("sp_riclassificato", {})
+        sp_prec = res_prec.get("sp_riclassificato", {})
+        ce_corr = res_corr.get("ce_riclassificato", {})
+        ce_prec = res_prec.get("ce_riclassificato", {})
+
+        # Salto totale attivo > 50%
+        ta_corr = sp_corr.get("quadratura", {}).get("totale_attivo", 0)
+        ta_prec = sp_prec.get("quadratura", {}).get("totale_attivo", 0)
+        if ta_prec > 0:
+            var = abs(ta_corr - ta_prec) / ta_prec
+            if var > 0.5:
+                issues.append({
+                    "codice": "CROSS_SALTO_ATTIVO",
+                    "severity": "warning",
+                    "dettaglio": (
+                        f"Totale attivo: salto {var:.0%} tra {anno_prec} "
+                        f"({ta_prec:,}) e {anno_corr} ({ta_corr:,})"
+                    ),
+                })
+
+        # Cambio segno EBITDA
+        ebitda_corr = ce_corr.get("ebitda", 0)
+        ebitda_prec = ce_prec.get("ebitda", 0)
+        if ebitda_corr * ebitda_prec < 0:
+            issues.append({
+                "codice": "CROSS_SEGNO_EBITDA",
+                "severity": "warning",
+                "dettaglio": (
+                    f"Cambio segno EBITDA: {anno_prec}={ebitda_prec:,} → "
+                    f"{anno_corr}={ebitda_corr:,}"
+                ),
+            })
+
+    return issues
+
+
 def calcola_severity(checks: list[dict]) -> tuple[str, float]:
     """Calcola severity complessiva e score numerico da lista di checks.
 

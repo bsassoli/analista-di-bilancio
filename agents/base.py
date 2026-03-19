@@ -192,6 +192,22 @@ def definisci_tools_per_agente(nome_agente: str) -> list[dict]:
                     "required": ["testo"],
                 },
             },
+            {
+                "name": "cerca_pattern_testo",
+                "description": "Cerca pattern regex nel testo e restituisce i match con contesto (±100 chars).",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "testo": {"type": "string", "description": "Testo in cui cercare"},
+                        "patterns": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Lista di pattern regex da cercare",
+                        },
+                    },
+                    "required": ["testo", "patterns"],
+                },
+            },
         ],
         "skill_checker": [
             {
@@ -247,6 +263,33 @@ def definisci_tools_per_agente(nome_agente: str) -> list[dict]:
                     "required": ["totale_attivo", "totale_passivo"],
                 },
             },
+            {
+                "name": "calcola_ccon",
+                "description": "Calcola il Capitale Circolante Operativo Netto (CCON = crediti comm. + rimanenze + altri crediti op. - debiti operativi).",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "crediti_commerciali": {"type": "integer"},
+                        "rimanenze": {"type": "integer"},
+                        "altri_crediti_operativi": {"type": "integer"},
+                        "debiti_operativi": {"type": "integer"},
+                    },
+                    "required": ["crediti_commerciali", "rimanenze", "altri_crediti_operativi", "debiti_operativi"],
+                },
+            },
+            {
+                "name": "calcola_pfn",
+                "description": "Calcola la Posizione Finanziaria Netta (PFN = debiti fin. lungo + debiti fin. breve - disponibilita liquide). PFN positiva = indebitamento.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "debiti_fin_lungo": {"type": "integer"},
+                        "debiti_fin_breve": {"type": "integer"},
+                        "disponibilita_liquide": {"type": "integer"},
+                    },
+                    "required": ["debiti_fin_lungo", "debiti_fin_breve", "disponibilita_liquide"],
+                },
+            },
         ],
         "skill_analisi": [
             {
@@ -290,9 +333,12 @@ def esegui_tool(nome_tool: str, input_args: dict) -> Any:
         identifica_sezione,
         normalizza_numero,
         genera_id,
+        cerca_pattern_testo,
     )
     from tools.calcolatori import (
         calcola_subtotale,
+        calcola_ccon,
+        calcola_pfn,
         verifica_quadratura,
         variazione_yoy,
     )
@@ -323,6 +369,17 @@ def esegui_tool(nome_tool: str, input_args: dict) -> Any:
         ),
         "calcola_variazione_yoy": lambda args: variazione_yoy(
             args["valore_n"], args["valore_n1"]
+        ),
+        "cerca_pattern_testo": lambda args: cerca_pattern_testo(
+            args["testo"], args["patterns"]
+        ),
+        "calcola_ccon": lambda args: calcola_ccon(
+            args["crediti_commerciali"], args["rimanenze"],
+            args["altri_crediti_operativi"], args["debiti_operativi"]
+        ),
+        "calcola_pfn": lambda args: calcola_pfn(
+            args["debiti_fin_lungo"], args["debiti_fin_breve"],
+            args["disponibilita_liquide"]
         ),
     }
 
