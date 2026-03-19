@@ -98,6 +98,42 @@ a valore aggiunto per il CE, gestendo deviazioni e voci non standard.
 - `cerca_voce_schema(schema, pattern)` — fuzzy match su label/id
 - `applica_mapping(voce, regola)` — assegna voce a categoria target
 
+## Principi fondamentali della riclassifica
+
+### 1. Gli aggregati devono essere operativi
+Rimuovi tutto ciò che non fa parte del core business: componenti straordinarie,
+proventi/oneri non ricorrenti, effetti una tantum. L'obiettivo è isolare la
+performance operativa reale dell'azienda. In pratica:
+- Plusvalenze/minusvalenze da cessione cespiti → sotto EBIT, non in EBITDA
+- Proventi straordinari in A.5 (se identificati dalla NI) → separa da ricavi operativi
+- Accantonamenti per ristrutturazione → componente non ricorrente, segnalare
+
+### 2. Gli aggregati devono essere organici
+Rimuovi le distorsioni da fattori esterni o non strutturali:
+- **Effetti cambio**: utili/perdite su cambi → proventi/oneri finanziari, non operativi
+- **Commodity spike**: se la NI segnala variazioni anomale materie prime, annotare
+- **Crescita per acquisizione**: se flag `ACQUISIZIONE`, segnalare che la crescita
+  ricavi/EBITDA non è interamente organica. Il riclassificatore non rettifica (mancano
+  i dati pro-forma) ma DEVE documentare la distorsione nelle deviazioni
+
+### 3. Costruzione scalare del CE
+Il CE riclassificato segue una logica scalare rigorosa:
+```
+Ricavi netti (A.1 + A.5 + variazioni rimanenze prodotti)
+- Costi materie prime e merci (B.6 + B.11)
+= VALORE AGGIUNTO
+- Costi per servizi e godimento (B.7 + B.8 + B.14)
+- Costi del personale (B.9)
+= EBITDA
+- Ammortamenti e svalutazioni (B.10)
+= EBIT (risultato operativo)
+± Proventi/oneri finanziari (C.15-17)
+= EBT (risultato ante imposte)
+- Imposte (20)
+= UTILE NETTO
+```
+Ogni voce DEVE essere classificata in uno e un solo livello. Non duplicare.
+
 ## Logica di ragionamento
 
 ### Mapping SP — Criterio finanziario
