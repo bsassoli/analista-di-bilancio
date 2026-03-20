@@ -509,17 +509,20 @@ def _genera_narrative_template(indici: dict, trend: list, alert: list,
 
 def _genera_narrative_llm(indici: dict, trend: list, alert: list,
                            anni: list[str], valori_per_anno: dict,
-                           azienda: str) -> dict | None:
+                           azienda: str,
+                           pipeline_result: dict | None = None) -> dict | None:
     """Genera narrative usando Claude con chiamata diretta (no agent loop)."""
     import anthropic
+    from agents.base import carica_skill
 
     client = anthropic.Anthropic()
 
-    dati = json.dumps({
+    # Prepara dati completi per la narrative
+    dati_narrative: dict[str, Any] = {
         "azienda": azienda,
         "anni": anni,
         "indici": indici,
-        "trend": trend,
+        "trend": [t for t in trend if t.get("significativo")],
         "alert": alert,
         "valori_chiave": {
             anno: {
@@ -530,32 +533,95 @@ def _genera_narrative_llm(indici: dict, trend: list, alert: list,
                 "patrimonio_netto": valori_per_anno[anno]["patrimonio_netto"],
                 "pfn": valori_per_anno[anno]["pfn"],
                 "liquidita": valori_per_anno[anno]["liquidita"],
+                "crediti_commerciali": valori_per_anno[anno]["crediti_commerciali"],
+                "rimanenze": valori_per_anno[anno]["rimanenze"],
+                "debiti_operativi": valori_per_anno[anno]["debiti_operativi"],
+                "capitale_fisso_netto": valori_per_anno[anno]["capitale_fisso_netto"],
+                "debiti_fin_lungo": valori_per_anno[anno]["debiti_fin_lungo"],
+                "debiti_fin_breve": valori_per_anno[anno]["debiti_fin_breve"],
+                "ammortamenti": valori_per_anno[anno]["ammortamenti"],
+                "costi_personale": valori_per_anno[anno]["costi_personale"],
+                "valore_aggiunto": valori_per_anno[anno]["valore_aggiunto"],
+                "costo_venduto": valori_per_anno[anno]["costo_venduto"],
             }
             for anno in anni
         },
-    }, ensure_ascii=False, indent=2)
+        "struttura_costi": {
+            anno: {
+                "materie_prime_su_ricavi": round(abs(valori_per_anno[anno]["costo_venduto"] - abs(valori_per_anno[anno].get("costi_personale", 0))) / valori_per_anno[anno]["ricavi_netti"], 4) if valori_per_anno[anno]["ricavi_netti"] else None,
+                "personale_su_ricavi": round(abs(valori_per_anno[anno]["costi_personale"]) / valori_per_anno[anno]["ricavi_netti"], 4) if valori_per_anno[anno]["ricavi_netti"] else None,
+                "ammortamenti_su_ricavi": round(abs(valori_per_anno[anno]["ammortamenti"]) / valori_per_anno[anno]["ricavi_netti"], 4) if valori_per_anno[anno]["ricavi_netti"] else None,
+            }
+            for anno in anni
+        },
+    }
 
-    system = (
-        "Sei un analista finanziario specializzato in PMI italiane. "
-        "Genera commenti analitici in italiano per un report di bilancio. "
-        "Rispondi ESCLUSIVAMENTE con un JSON valido (nessun testo prima o dopo) "
-        "con queste 5 chiavi, ciascuna contenente un paragrafo di 4-8 righe:\n"
-        '- "sintesi": overview dell\'azienda, ricavi, margini, utile, posizione finanziaria\n'
-        '- "redditivita": andamento ROE, ROI, ROS, EBITDA margin, leve principali\n'
-        '- "struttura_finanziaria": equilibrio fonti/impieghi, PFN, copertura immobilizzazioni\n'
-        '- "liquidita": current/quick ratio, ciclo commerciale, giorni crediti/debiti/magazzino\n'
-        '- "conclusioni": punti di forza, aree di attenzione, outlook\n\n'
-        "Regole:\n"
-        "- Cita sempre i numeri specifici (valori in euro, percentuali, multipli)\n"
-        "- Spiega il 'perché' quando possibile, non solo il 'cosa'\n"
-        "- Se un indice è fuori soglia, contestualizza\n"
-        "- Usa un tono professionale da relazione finanziaria\n"
-        "- NON usare markdown, solo testo piano"
-    )
+    # Aggiungi flags e dati qualitativi se disponibili
+    if pipeline_result:
+        checker_pre = pipeline_result.get("checker_pre", {})
+        flags = []
+        for anno_res in checker_pre.get("risultati_per_anno", {}).values():
+            for c in anno_res.get("checks", []):
+                if c.get("severity_contributo") == "warning":
+                    flags.append(c["dettaglio"])
+        if flags:
+            dati_narrative["flags_checker"] = flags
+
+        # Deviazioni dalla riclassifica (contengono info IFRS 16, acquisizioni, ecc.)
+        riclass = pipeline_result.get("riclassifica", {})
+        deviazioni = []
+        for anno, res in riclass.get("risultati_per_anno", {}).items():
+            for dev in res.get("deviazioni", []):
+                deviazioni.append(dev if isinstance(dev, str) else json.dumps(dev, ensure_ascii=False))
+        if deviazioni:
+            dati_narrative["deviazioni_riclassifica"] = deviazioni
+
+    dati = json.dumps(dati_narrative, ensure_ascii=False, indent=2)
+
+    # Carica lo skill come base del system prompt
+    skill_text = carica_skill("skill_analisi")
+    # Estrai solo la sezione Narrative e Disciplina analitica (non tutto lo skill)
+    sezioni_rilevanti = []
+    in_sezione = False
+    for line in skill_text.split("\n"):
+        if line.startswith("### Narrative") or line.startswith("## Disciplina analitica"):
+            in_sezione = True
+        elif line.startswith("## ") and in_sezione and "Disciplina" not in line:
+            in_sezione = False
+        if in_sezione:
+            sezioni_rilevanti.append(line)
+    istruzioni_skill = "\n".join(sezioni_rilevanti)
+
+    system = f"""Sei un analista finanziario senior. Genera commenti analitici in italiano per un report di bilancio.
+
+Rispondi ESCLUSIVAMENTE con un JSON valido (nessun testo prima o dopo) con queste 5 chiavi.
+Ogni sezione deve essere un paragrafo di 6-12 righe.
+
+ISTRUZIONI DETTAGLIATE PER OGNI SEZIONE:
+
+"sintesi": Overview dell'azienda. Dimensione (ricavi), posizione (crescita/stabile/declino), i 2-3 numeri chiave, il trend principale. Se ci sono effetti contabili rilevanti (IFRS 16, acquisizioni), menzionarli subito con KPI adjusted.
+
+"redditivita": Andamento margini con DRIVER ANALYSIS. Non solo cosa è cambiato ma PERCHÉ. Analizzare la struttura costi come % ricavi nel tempo (i dati struttura_costi sono forniti). Identificare leva operativa, pricing power, efficienza. Se ci sono deviazioni IFRS 16 o PPA, calcolare margini adjusted.
+
+"struttura_finanziaria": Come l'azienda si finanzia. Evoluzione PFN. Connessione esplicita: capex/investimenti → finanziamento → debito → sostenibilità. Se flag IFRS 16: segnalare PFN al netto leasing. Dichiarare che l'analisi si basa su saldi di fine anno e il profilo infrannuale potrebbe differire.
+
+"liquidita": Current/quick ratio e evoluzione. DECOMPOSIZIONE working capital: quale componente guida il cambiamento? Catena causale completa (es. aumento rimanenze → assorbimento cassa → impatto su debito). Giorni crediti vs debiti: chi finanzia chi?
+
+"conclusioni": Punti di forza (3-4). Aree di attenzione (2-3 con numeri). TESI PRINCIPALE: "L'azienda è in fase [X] perché [Y]. La tesi regge SE [condizione verificabile entro 6-12 mesi]." VARIABILE CHIAVE: "La singola cosa da verificare nel prossimo bilancio è [Z]."
+
+REGOLE:
+- Ogni affermazione cita numeri specifici (euro, %, multipli, punti percentuali)
+- Spiega il PERCHÉ, non solo il COSA
+- Se hai deviazioni_riclassifica con effetti IFRS 16: calcola e mostra il KPI adjusted
+- I dati sono a fine anno: segnala il limite nella struttura finanziaria
+- Tono professionale da relazione finanziaria
+- NON usare markdown, solo testo piano
+- Le conclusioni DEVONO terminare con una tesi falsificabile e una variabile chiave
+"""
 
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=4096,
+        max_tokens=8192,
         system=system,
         messages=[{"role": "user", "content": dati}],
     )
@@ -563,13 +629,32 @@ def _genera_narrative_llm(indici: dict, trend: list, alert: list,
     text = response.content[0].text.strip()
 
     # Estrai JSON dalla risposta
-    # Potrebbe essere JSON puro o wrapped in ```json ... ```
     if text.startswith("```"):
         lines = text.split("\n")
         json_lines = [l for l in lines if not l.startswith("```")]
         text = "\n".join(json_lines)
 
-    result = json.loads(text)
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError:
+        # Prova primo { ... } bilanciato
+        start = text.find("{")
+        if start != -1:
+            depth = 0
+            for i in range(start, len(text)):
+                if text[i] == "{": depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            result = json.loads(text[start:i+1])
+                            break
+                        except json.JSONDecodeError:
+                            return None
+            else:
+                return None
+        else:
+            return None
 
     sezioni_attese = ["sintesi", "redditivita", "struttura_finanziaria", "liquidita", "conclusioni"]
     if isinstance(result, dict) and all(k in result for k in sezioni_attese):
@@ -580,13 +665,17 @@ def _genera_narrative_llm(indici: dict, trend: list, alert: list,
 
 def _genera_narrative(indici: dict, trend: list, alert: list,
                        anni: list[str], valori_per_anno: dict,
-                       azienda: str) -> dict:
+                       azienda: str,
+                       pipeline_result: dict | None = None) -> dict:
     """Genera narrative, con fallback se API key non disponibile."""
     # Prova con LLM se API key presente
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if api_key:
         try:
-            result = _genera_narrative_llm(indici, trend, alert, anni, valori_per_anno, azienda)
+            result = _genera_narrative_llm(
+                indici, trend, alert, anni, valori_per_anno, azienda,
+                pipeline_result=pipeline_result,
+            )
             if result is not None:
                 return result
             print("[analista] LLM narrative fallback: formato risposta non valido, uso template.")
@@ -626,7 +715,8 @@ def esegui_analisi(pipeline_result: dict) -> dict:
     alert = _genera_alert(indici, anni)
 
     # 5. Genera narrative
-    narrative = _genera_narrative(indici, trend, alert, anni, valori_per_anno, azienda)
+    narrative = _genera_narrative(indici, trend, alert, anni, valori_per_anno, azienda,
+                                  pipeline_result=pipeline_result)
 
     # 6. Calcola CAGR ricavi ed EBITDA se possibile
     cagr_info = {}
