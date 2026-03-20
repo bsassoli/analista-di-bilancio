@@ -234,6 +234,118 @@ def valida_coerenza_utile(schema: dict, anno: str) -> dict:
         }
 
 
+def valida_subtotali(schema: dict) -> list[dict]:
+    """Verifica che i subtotali siano coerenti con le voci di dettaglio.
+
+    Per ogni voce con livello 1 (totale) o 2 (subtotale), verifica che il
+    valore sia approssimamente uguale alla somma dei figli.
+
+    Returns:
+        Lista di issue con codice, severity, dettaglio.
+    """
+    issues: list[dict] = []
+
+    for sezione in ("sp", "ce"):
+        voci = schema.get(sezione, [])
+        # Costruisci gerarchia: trova totali e le voci sotto di loro
+        totali_e_figli: list[tuple[dict, list[dict]]] = []
+        current_figli: list[dict] = []
+
+        for voce in voci:
+            livello = voce.get("livello", 3)
+            if livello <= 2 and current_figli:
+                # Il precedente gruppo è completo
+                # Ma non abbiamo ancora il totale... skip
+                pass
+
+            if livello == 1:
+                # Questo è un totale — i figli sono le voci precedenti con livello > 1
+                if current_figli:
+                    totali_e_figli.append((voce, current_figli))
+                current_figli = []
+            else:
+                current_figli.append(voce)
+
+        # Verifica ciascun totale
+        for totale, figli in totali_e_figli:
+            if not figli:
+                continue
+
+            for anno in totale.get("valore", {}).keys():
+                val_totale = totale["valore"].get(anno)
+                if val_totale is None or val_totale == 0:
+                    continue
+
+                # Somma solo figli di livello 2-3 (non di_cui che hanno livello speciale)
+                somma = sum(
+                    f["valore"].get(anno, 0) or 0
+                    for f in figli
+                    if f.get("livello", 3) >= 2
+                )
+
+                if somma == 0:
+                    continue
+
+                delta = abs(val_totale - somma)
+                pct = delta / abs(val_totale) * 100 if val_totale else 0
+
+                if pct > 5:
+                    issues.append({
+                        "codice": "SUBTOTALE_INCOERENTE",
+                        "severity": "warning",
+                        "dettaglio": (
+                            f"{sezione.upper()} {anno}: '{totale['label']}' = {val_totale:,} "
+                            f"ma somma figli = {somma:,} (delta: {delta:,}, {pct:.1f}%)"
+                        ),
+                    })
+
+    return issues
+
+
+def valida_riconciliazione_ce(schema: dict) -> list[dict]:
+    """Verifica riconciliazione CE: ricavi - costi ≈ utile.
+
+    Returns:
+        Lista di issue.
+    """
+    issues: list[dict] = []
+    utile_dich = schema.get("metadata", {}).get("utile_dichiarato", {})
+
+    for anno_str in [str(a) for a in schema.get("anni_estratti", [])]:
+        # Cerca ricavi totali e utile nelle voci CE
+        ricavi_tot = 0
+        costi_tot = 0
+        utile_ce = 0
+
+        for v in schema.get("ce", []):
+            val = v.get("valore", {}).get(anno_str, 0) or 0
+            vid = v.get("id", "").lower()
+            label = v.get("label", "").lower()
+
+            if "utile" in label and "esercizio" in label and "complessivo" not in label:
+                utile_ce = val
+            elif val > 0:
+                ricavi_tot += val
+            else:
+                costi_tot += val
+
+        if utile_ce and ricavi_tot:
+            calcolato = ricavi_tot + costi_tot  # costi sono negativi
+            delta = abs(utile_ce - calcolato)
+            if delta > abs(utile_ce) * 0.10 and delta > 1000:
+                issues.append({
+                    "codice": "CE_RICONCILIAZIONE",
+                    "severity": "warning",
+                    "dettaglio": (
+                        f"CE {anno_str}: ricavi ({ricavi_tot:,}) + costi ({costi_tot:,}) = "
+                        f"{calcolato:,}, ma utile dichiarato = {utile_ce:,} "
+                        f"(delta: {delta:,})"
+                    ),
+                })
+
+    return issues
+
+
 def valida_cross_anno(risultati_per_anno: dict) -> list[dict]:
     """Verifica coerenza tra anni consecutivi nei dati riclassificati.
 
