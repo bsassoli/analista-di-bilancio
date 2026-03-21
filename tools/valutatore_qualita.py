@@ -158,9 +158,7 @@ REGOLE:
 1. Restituisci SOLO JSON valido, nessun testo prima o dopo.
 2. Per ogni criterio, il punteggio DEVE essere tra 1 e 5.
 3. Le motivazioni devono essere specifiche, citando parti dell'analisi.
-4. Per i criteri 7 (peer) e 8 (valuation): se il sistema non ha dati di peer,
-   valuta se l'analisi lo segnala e fornisce le basi per un'analisi comparativa.
-5. La "risposta_domanda_chiave" deve essere la tua risposta alla domanda, non
+4. La "risposta_domanda_chiave" deve essere la tua risposta alla domanda, non
    quella dell'analisi — cosa TU consideri la variabile chiave da monitorare.
 """
 
@@ -256,8 +254,10 @@ if __name__ == "__main__":
     print("Valutazione in corso...")
     val = valuta_qualita(pipeline_result, analisi, qualitativo)
 
-    # Salva
-    out_path = Path("data/output/valutazione_qualita.json")
+    # Salva nella sottocartella azienda
+    azienda = pipeline_result.get("azienda", "azienda")
+    slug = azienda.lower().replace(" ", "_").replace(".", "").replace(",", "")
+    out_path = Path("data/output") / slug / "valutazione_qualita.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(val, indent=2, ensure_ascii=False), encoding="utf-8")
 

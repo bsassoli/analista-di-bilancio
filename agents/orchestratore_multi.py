@@ -145,12 +145,17 @@ def valida_cross_anno(risultati_per_anno: dict) -> list[dict]:
     return issues
 
 
-def analizza_bilancio_multi(pdf_paths: list[str], azienda: str) -> dict:
+def analizza_bilancio_multi(
+    pdf_paths: list[str],
+    azienda: str,
+    use_docling: bool = True,
+) -> dict:
     """Processa N PDF della stessa azienda e produce analisi multi-anno.
 
     Args:
         pdf_paths: Lista di path PDF, in ordine cronologico (più vecchio prima).
         azienda: Nome azienda.
+        use_docling: Se True (default), usa Docling per l'estrazione strutturale.
 
     Returns:
         Dict con risultati merged, analisi unificata, output paths.
@@ -175,7 +180,7 @@ def analizza_bilancio_multi(pdf_paths: list[str], azienda: str) -> dict:
         print(f"  PDF {i+1}/{len(pdf_paths)}: {Path(pdf_path).name}")
         print(f"{'='*50}")
 
-        result = analizza_bilancio(pdf_path, azienda)
+        result = analizza_bilancio(pdf_path, azienda, use_docling=use_docling)
 
         if result.get("errore"):
             print(f"  [WARN] PDF {i+1} fallito: {result.get('errore')}")

@@ -160,6 +160,15 @@ def identifica_tabelle_prospetto(path: str) -> dict:
             segnali_oic += 1
 
         # Classifica tipo tabella
+        # Rendiconto finanziario (da escludere dal CE)
+        is_rendiconto = any(kw in testo_tabella for kw in [
+            "rendiconto finanziario", "flusso di cassa",
+            "cash flow", "flussi finanziari",
+            "disponibilità liquide iniziali", "disponibilità liquide finali",
+            "flusso monetario", "flussi di cassa",
+            "incremento delle disponibilit", "decremento delle disponibilit",
+        ])
+
         # SP: contiene "totale attivo" o "totale patrimonio netto" o "attività non correnti"
         is_sp = any(kw in testo_tabella for kw in [
             "totale attivo", "totale attivit",
@@ -169,12 +178,22 @@ def identifica_tabelle_prospetto(path: str) -> dict:
             "passività non correnti",
         ])
         # CE: contiene "risultato operativo" o "ebitda" o "conto economico"
-        is_ce = any(kw in testo_tabella for kw in [
+        # Ma esclude tabelle che iniziano con voci SP (misclassificazione)
+        is_ce = not is_rendiconto and any(kw in testo_tabella for kw in [
             "risultato operativo", "ebitda", "ebit",
             "risultato netto", "conto economico",
             "valore della produzione",
             "risultato prima delle imposte",
         ])
+        # Escludi tabelle classificate CE ma che iniziano con voci SP o PFN
+        if is_ce and len(df) > 0:
+            prima_label = str(df.iloc[0, 0]).lower().strip() if len(df.columns) > 0 else ""
+            if any(kw in prima_label for kw in [
+                "attività non correnti", "attivo", "immobilizzazion",
+                "attività correnti", "disponibilità di cassa",
+                "posizione finanziaria",
+            ]):
+                is_ce = False
 
         # Deve avere abbastanza righe per essere un prospetto
         if len(df) < 5:

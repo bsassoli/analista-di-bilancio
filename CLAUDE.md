@@ -5,7 +5,7 @@
 - Python 3.14, venv in `.venv/`
 - Attivare: `source .venv/bin/activate`
 - API key Anthropic in `.env` (caricata con `python-dotenv`, `override=True`)
-- Installare dipendenze: `pip install anthropic pdfplumber pandas openpyxl python-docx python-dotenv pytest`
+- Installare dipendenze: `pip install anthropic pdfplumber pandas openpyxl python-docx python-dotenv pytest docling`
 
 ## Comandi frequenti
 
@@ -13,11 +13,14 @@
 # Test
 python -m pytest tests/ -v
 
-# Pipeline completa su un bilancio
+# Pipeline da directory (nome cartella = nome azienda, multi-anno automatico)
+python main.py "data/input/Enervit S.p.A."
+
+# Pipeline singolo PDF
 python main.py "data/input/nome_bilancio.pdf" "Nome Azienda"
 
-# Pipeline multi-anno (N PDF stessa azienda)
-python main.py --multi "data/input/2022.pdf" "data/input/2023.pdf" "data/input/2024.pdf" -- "Nome Azienda"
+# Pipeline con vecchio estrattore pdfplumber
+python main.py --no-docling "data/input/Enervit S.p.A."
 
 # Singoli step (richiedono argomento path)
 python -m agents.estrattore_pdf "data/input/bilancio.pdf"
@@ -29,7 +32,7 @@ python -m agents.produttore "data/output/pipeline_result.json" "data/output/anal
 
 ## Architettura
 
-Pipeline lineare a 8 step: PDF → Estrattore PDF (LLM) → Estrattore numerico (det.) → Estrattore qualitativo (LLM, nota integrativa) → Checker (det.) → Riclassificatore (LLM primario, det. fallback) → Analista (det. + LLM narrative) → Produttore (det.)
+Pipeline lineare a 8 step: PDF → Estrattore PDF (Docling + LLM, default; oppure pdfplumber + LLM con --no-docling) → Estrattore numerico (det.) → Estrattore qualitativo (LLM, nota integrativa) → Checker (det.) → Riclassificatore (LLM primario, det. fallback) → Analista (det. + LLM narrative) → Produttore (det.)
 
 3 livelli:
 - **L0** `main.py` — orchestratore (singolo PDF e multi-anno)

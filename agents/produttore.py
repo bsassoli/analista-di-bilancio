@@ -596,7 +596,9 @@ def esegui_produzione(pipeline_result: dict, analisi: Optional[dict] = None) -> 
             - word_path: percorso del file .docx
             - azienda: nome azienda
     """
-    output_dir = ROOT / "data" / "output"
+    azienda = pipeline_result.get("azienda", "azienda")
+    slug = _nome_file_base(azienda)
+    output_dir = ROOT / "data" / "output" / slug
     output_dir.mkdir(parents=True, exist_ok=True)
 
     excel_path = _genera_excel(pipeline_result, analisi, output_dir)

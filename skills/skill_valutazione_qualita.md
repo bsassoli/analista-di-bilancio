@@ -2,7 +2,7 @@
 
 ## Ruolo e obiettivo
 Valutare la qualità di un'analisi di bilancio prodotta dal sistema, assegnando un
-punteggio da 1 a 5 su 10 criteri. Usato come test di qualità / benchmark per
+punteggio da 1 a 5 su 8 criteri. Usato come test di qualità / benchmark per
 calibrare e migliorare gli agenti.
 
 ## Rubric di valutazione
@@ -40,33 +40,21 @@ Valuta ciascuna area da 1 a 5.
 - 3 → Nota aumenti/diminuzioni investimenti
 - 5 → Integra capex in flussi di cassa e strategia (crescita vs mantenimento)
 
-### 7. Confronto con peer e multipli
-- 1 → Nessun comparable o confronto puramente meccanico
-- 3 → Usa comparable ma con interpretazione limitata
-- 5 → Aggiusta per differenze (dimensione, segmenti, accounting) e interpreta sconto/premio
-- NOTA: se il sistema non ha dati di peer, valutare se l'analisi SEGNALA la mancanza e suggerisce quali peer usare
-
-### 8. Ragionamento sulla valutazione (multi-angolo)
-- 1 → Metrica singola, nessuna profondità
-- 3 → Usa metriche multiple
-- 5 → Triangola: margini, crescita, rischio, multipli storici
-- NOTA: se il sistema non fa valuation, valutare se fornisce le basi per farne una (margini normalizzati, crescita organica, rischi)
-
-### 9. Identificazione dei rischi
+### 7. Identificazione dei rischi
 - 1 → Rischi generici
 - 3 → Identifica rischi rilevanti (es. working capital, debito)
 - 5 → Specifici, prioritizzati, collegati a numeri e dinamiche reali
 
-### 10. Conclusioni e insight forward-looking
+### 8. Conclusioni e insight forward-looking
 - 1 → Puro riassunto
 - 3 → Qualche interpretazione
 - 5 → Tesi chiara + definisce cosa deve succedere (es. rientro scorte, normalizzazione debito)
 
 ## Punteggio finale
-- 40-50 → Analisi di alta qualità (livello analista senior)
-- 30-39 → Solida ma ancora meccanica
-- 20-29 → Profondità analitica debole
-- <20 → Non sufficiente
+- 32-40 → Analisi di alta qualità (livello analista senior)
+- 24-31 → Solida ma ancora meccanica
+- 16-23 → Profondità analitica debole
+- <16 → Non sufficiente
 
 ## Cosa si valuta davvero
 
@@ -94,8 +82,6 @@ La risposta a questa domanda dice quasi tutto sul livello dell'analisi.
     "collegamento_cassa": {"score": 0, "motivazione": "..."},
     "debito_stagionalita": {"score": 0, "motivazione": "..."},
     "capex_dinamiche": {"score": 0, "motivazione": "..."},
-    "peer_comparison": {"score": 0, "motivazione": "..."},
-    "valutazione_multiangolo": {"score": 0, "motivazione": "..."},
     "identificazione_rischi": {"score": 0, "motivazione": "..."},
     "conclusioni_forward": {"score": 0, "motivazione": "..."}
   },

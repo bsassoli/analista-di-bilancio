@@ -29,8 +29,9 @@ def carica_stato(azienda: str) -> dict | None:
     Returns:
         Dict stato o None se non esiste.
     """
+    slug = azienda.lower().replace(" ", "_").replace(".", "").replace(",", "")
     stato_path = (
-        Path(__file__).parent.parent / "data" / "stato" / f"{azienda}_stato.json"
+        Path(__file__).parent.parent / "data" / "stato" / slug / "stato.json"
     )
     if stato_path.exists():
         return json.loads(stato_path.read_text(encoding="utf-8"))
@@ -43,8 +44,9 @@ def salva_stato(azienda: str, stato: dict) -> str:
     Returns:
         Path del file salvato.
     """
+    slug = azienda.lower().replace(" ", "_").replace(".", "").replace(",", "")
     stato_path = (
-        Path(__file__).parent.parent / "data" / "stato" / f"{azienda}_stato.json"
+        Path(__file__).parent.parent / "data" / "stato" / slug / "stato.json"
     )
     stato_path.parent.mkdir(parents=True, exist_ok=True)
     stato_path.write_text(json.dumps(stato, indent=2, ensure_ascii=False), encoding="utf-8")

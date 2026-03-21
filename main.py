@@ -1,9 +1,10 @@
 """Runner principale — pipeline completa PDF → Excel + Word.
 
 Uso:
+    python main.py "data/input/Enervit S.p.A."          # directory → multi-anno, nome = dir name
     python main.py data/input/bilancio.pdf "Nome Azienda"
-    python main.py data/input/bilancio.pdf  # usa nome dal PDF
-    python main.py --multi pdf1.pdf pdf2.pdf -- "Nome Azienda"
+    python main.py data/input/bilancio.pdf               # usa nome dal PDF
+    python main.py --no-docling data/input/bilancio.pdf  # vecchio estrattore pdfplumber
 """
 
 import json
@@ -22,12 +23,17 @@ from agents.analista import esegui_analisi
 from agents.produttore import esegui_produzione
 
 
-def analizza_bilancio(pdf_path: str, azienda: str | None = None) -> dict:
+def analizza_bilancio(
+    pdf_path: str,
+    azienda: str | None = None,
+    use_docling: bool = True,
+) -> dict:
     """Esegue la pipeline completa di analisi bilancio.
 
     Args:
         pdf_path: Path al file PDF del bilancio.
         azienda: Nome azienda (opzionale, estratto dal PDF se omesso).
+        use_docling: Se True, usa Docling per l'estrazione strutturale.
 
     Returns:
         Dict con tutti i risultati e path dei file generati.
@@ -38,11 +44,16 @@ def analizza_bilancio(pdf_path: str, azienda: str | None = None) -> dict:
     print("=" * 70)
     print()
 
-    # --- Fase 1: Estrazione PDF (LLM) ---
-    print("[1/6] Estrazione dal PDF...")
+    # --- Fase 1: Estrazione PDF ---
+    estrattore = "Docling + LLM" if use_docling else "pdfplumber + LLM"
+    print(f"[1/6] Estrazione dal PDF ({estrattore})...")
     azienda_nome = azienda or "azienda"
 
-    estrazione_pdf = estrai_pdf(pdf_path)
+    if use_docling:
+        from agents.estrattore_pdf_docling import estrai_pdf_docling
+        estrazione_pdf = estrai_pdf_docling(pdf_path)
+    else:
+        estrazione_pdf = estrai_pdf(pdf_path)
     if azienda:
         estrazione_pdf["azienda"] = azienda
     azienda_nome = estrazione_pdf.get("azienda", azienda_nome)
@@ -124,31 +135,55 @@ def analizza_bilancio(pdf_path: str, azienda: str | None = None) -> dict:
     }
 
 
-def analizza_bilancio_multi(pdf_paths: list[str], azienda: str) -> dict:
+def analizza_bilancio_multi(
+    pdf_paths: list[str],
+    azienda: str,
+    use_docling: bool = True,
+) -> dict:
     """Processa N PDF della stessa azienda e produce analisi multi-anno."""
     from agents.orchestratore_multi import analizza_bilancio_multi as _multi
-    return _multi(pdf_paths, azienda)
+    return _multi(pdf_paths, azienda, use_docling=use_docling)
+
+
+def _pdfs_da_directory(dir_path: Path) -> list[str]:
+    """Trova tutti i PDF in una directory, ordinati per nome."""
+    pdfs = sorted(dir_path.glob("*.pdf"))
+    if not pdfs:
+        print(f"Errore: nessun PDF trovato in {dir_path}")
+        sys.exit(1)
+    return [str(p) for p in pdfs]
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Uso: python main.py <pdf_path> [azienda]")
-        print("     python main.py --multi <pdf1> <pdf2> ... -- <azienda>")
+        print("Uso: python main.py [--no-docling] <directory>")
+        print("     python main.py [--no-docling] <pdf_path> [azienda]")
         sys.exit(1)
 
-    if sys.argv[1] == "--multi":
-        if "--" in sys.argv:
-            sep_idx = sys.argv.index("--")
-            pdfs = sys.argv[2:sep_idx]
-            nome = sys.argv[sep_idx + 1] if sep_idx + 1 < len(sys.argv) else None
+    args = sys.argv[1:]
+    # Docling è il default; --no-docling usa il vecchio pdfplumber
+    use_docling = "--no-docling" not in args
+    if "--no-docling" in args:
+        args.remove("--no-docling")
+    if "--docling" in args:
+        args.remove("--docling")
+
+    target = Path(args[0])
+
+    if target.is_dir():
+        # Directory mode: nome azienda = nome cartella, PDF = tutti i .pdf dentro
+        nome = target.name
+        pdfs = _pdfs_da_directory(target)
+        print(f"  Directory: {target}")
+        print(f"  Azienda:   {nome}")
+        print(f"  PDF:       {len(pdfs)} file")
+        print()
+        if len(pdfs) == 1:
+            result = analizza_bilancio(pdfs[0], nome, use_docling=use_docling)
         else:
-            pdfs = sys.argv[2:]
-            nome = None
-        if not pdfs:
-            print("Errore: specificare almeno un PDF.")
-            sys.exit(1)
-        result = analizza_bilancio_multi(pdfs, nome)
+            result = analizza_bilancio_multi(pdfs, nome, use_docling=use_docling)
     else:
-        pdf = sys.argv[1]
-        nome = sys.argv[2] if len(sys.argv) > 2 else None
-        result = analizza_bilancio(pdf, nome)
+        # Single PDF mode
+        pdf = args[0]
+        nome = args[1] if len(args) > 1 else None
+        result = analizza_bilancio(pdf, nome, use_docling=use_docling)

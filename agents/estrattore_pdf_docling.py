@@ -82,28 +82,61 @@ def _estrai_struttura(pdf_path: str) -> dict:
 # Fase 2 — LLM: mapping semantico (solo se necessario)
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT_SEMANTICO = """Sei un esperto di bilanci italiani. Ti vengono date righe estratte da un prospetto contabile.
+_SYSTEM_PROMPT_SP = """Sei un esperto di bilanci italiani. Ti vengono date righe estratte dallo STATO PATRIMONIALE di un bilancio.
 
-Il tuo compito è SOLO mapping semantico:
-1. Verifica che le label siano corrette e pulite
-2. Assegna la gerarchia corretta (sezione > subtotale > dettaglio > di_cui)
-3. Identifica e correggi label spezzate o malformate
-4. Identifica voci che sono "di cui" (informative, non addendi)
-5. NON modificare i valori numerici — restituiscili così come sono
+Il tuo compito:
+1. Separa le righe in sp_attivo e sp_passivo (includi patrimonio netto nel passivo)
+2. Pulisci le label (ricomponi label spezzate, correggi errori OCR)
+3. Assegna la gerarchia: sezione > subtotale > dettaglio > di_cui
+4. Identifica voci "di cui" (informative, non addendi)
+5. NON modificare i valori numerici — restituiscili esattamente come sono
 
-Restituisci SOLO JSON valido con questa struttura:
+REGOLE IMPORTANTI:
+- TUTTE le righe devono comparire nell'output, non omettere nulla
+- Il totale attivo e il totale passivo+PN devono essere presenti
+- Per bilanci IFRS: "Attività non correnti/correnti" → sp_attivo, "Patrimonio netto + Passività non correnti/correnti" → sp_passivo
+- Per bilanci OIC: voci A-D dell'attivo → sp_attivo, voci A-E del passivo → sp_passivo
+
+Restituisci SOLO JSON valido:
 {
-  "azienda": "...",
-  "formato_bilancio": "IFRS|OIC_ordinario",
-  "anni_presenti": ["2024", "2023"],
-  "sezioni": {
-    "sp_attivo": {"pagine": [], "righe": [{"label": "...", "valori": {"2024": "...", "2023": "..."}, "livello": "dettaglio|subtotale|totale|di_cui|sezione", "genitore": "...|null", "nota_ref": "...|null"}]},
-    "sp_passivo": {"pagine": [], "righe": [...]},
-    "ce": {"pagine": [], "righe": [...]}
-  },
-  "problemi_layout": [],
-  "confidence_estrazione": 0.95
+  "sp_attivo": {"righe": [{"label": "...", "valori": {"2024": "...", "2023": "..."}, "livello": "dettaglio|subtotale|totale|di_cui|sezione", "genitore": "...|null", "nota_ref": "...|null"}]},
+  "sp_passivo": {"righe": [...]},
+  "problemi": []
 }"""
+
+_SYSTEM_PROMPT_CE = """Sei un esperto di bilanci italiani. Ti vengono date righe estratte dal CONTO ECONOMICO di un bilancio.
+
+Il tuo compito:
+1. Pulisci le label (ricomponi label spezzate, correggi errori OCR)
+2. Assegna la gerarchia: sezione > subtotale > dettaglio > di_cui
+3. Identifica voci "di cui" (informative, non addendi)
+4. NON modificare i valori numerici — restituiscili esattamente come sono
+
+REGOLE IMPORTANTI:
+- TUTTE le righe devono comparire nell'output, non omettere nulla
+- Il risultato netto dell'esercizio deve essere presente
+- Subtotali intermedi (EBITDA, EBIT, risultato operativo, ecc.) vanno marcati come "subtotale"
+
+Restituisci SOLO JSON valido:
+{
+  "ce": {"righe": [{"label": "...", "valori": {"2024": "...", "2023": "..."}, "livello": "dettaglio|subtotale|totale|di_cui|sezione", "genitore": "...|null", "nota_ref": "...|null"}]},
+  "problemi": []
+}"""
+
+
+def _chiama_llm(client, system: str, dati: str, model: str, max_tokens: int = 16384) -> dict:
+    """Singola chiamata LLM con parsing JSON."""
+    response = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=system,
+        messages=[{
+            "role": "user",
+            "content": dati,
+        }],
+    )
+    text = response.content[0].text.strip()
+    return _estrai_json(text)
 
 
 def _mapping_semantico(
@@ -115,37 +148,101 @@ def _mapping_semantico(
 ) -> dict:
     """Invia righe estratte da Docling a Claude per mapping semantico.
 
-    Claude NON deve estrarre tabelle (già fatto da Docling), solo:
-    - Pulire label
-    - Classificare in sp_attivo/sp_passivo
-    - Assegnare gerarchia
-    - Identificare "di cui"
+    Split in 2 chiamate separate (SP e CE) per evitare troncamenti.
     """
     client = crea_client()
 
-    # Prepara dati per Claude
-    dati = json.dumps({
-        "formato": formato,
-        "anni": anni,
-        "sp_righe": sp_righe[:80],  # Limita per non eccedere context
-        "ce_righe": ce_righe[:40],
-    }, ensure_ascii=False, indent=2)
+    risultato = {
+        "formato_bilancio": formato,
+        "anni_presenti": anni,
+        "sezioni": {
+            "sp_attivo": {"pagine": [], "righe": []},
+            "sp_passivo": {"pagine": [], "righe": []},
+            "ce": {"pagine": [], "righe": []},
+        },
+        "problemi_layout": [],
+    }
 
-    n_chars = len(dati)
-    print(f"[docling+llm]   Dati per Claude: {n_chars:,} chars ({len(sp_righe)} SP + {len(ce_righe)} CE righe)")
+    # --- Chiamata SP ---
+    if sp_righe:
+        dati_sp = json.dumps({
+            "formato": formato,
+            "anni": anni,
+            "righe": sp_righe,
+        }, ensure_ascii=False, indent=2)
+        n_sp = len(sp_righe)
+        print(f"[docling+llm]   SP: {n_sp} righe, {len(dati_sp):,} chars")
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=16384,
-        system=_SYSTEM_PROMPT_SEMANTICO,
-        messages=[{
-            "role": "user",
-            "content": f"Analizza queste righe e produci il JSON strutturato.\n\n{dati}",
-        }],
+        prompt_sp = (
+            f"Bilancio formato {formato}, anni {anni}.\n"
+            f"Queste sono {n_sp} righe dello Stato Patrimoniale. "
+            f"Separale in sp_attivo e sp_passivo.\n\n{dati_sp}"
+        )
+        resp_sp = _chiama_llm(client, _SYSTEM_PROMPT_SP, prompt_sp, model)
+
+        if "error" in resp_sp:
+            print(f"[docling+llm]   ERRORE SP: {resp_sp['error']}")
+            risultato["problemi_layout"].append(f"LLM SP fallito: {resp_sp.get('error', '')}")
+        else:
+            sp_att = resp_sp.get("sp_attivo", {})
+            sp_pas = resp_sp.get("sp_passivo", {})
+            n_att = len(sp_att.get("righe", []))
+            n_pas = len(sp_pas.get("righe", []))
+            print(f"[docling+llm]   SP risultato: {n_att} attivo + {n_pas} passivo = {n_att + n_pas} righe")
+
+            risultato["sezioni"]["sp_attivo"]["righe"] = sp_att.get("righe", [])
+            risultato["sezioni"]["sp_passivo"]["righe"] = sp_pas.get("righe", [])
+            risultato["problemi_layout"].extend(resp_sp.get("problemi", []))
+
+            # Estrai nome azienda se presente
+            if resp_sp.get("azienda"):
+                risultato["azienda"] = resp_sp["azienda"]
+
+    # --- Chiamata CE ---
+    if ce_righe:
+        dati_ce = json.dumps({
+            "formato": formato,
+            "anni": anni,
+            "righe": ce_righe,
+        }, ensure_ascii=False, indent=2)
+        n_ce = len(ce_righe)
+        print(f"[docling+llm]   CE: {n_ce} righe, {len(dati_ce):,} chars")
+
+        prompt_ce = (
+            f"Bilancio formato {formato}, anni {anni}.\n"
+            f"Queste sono {n_ce} righe del Conto Economico. "
+            f"Strutturale con gerarchia corretta.\n\n{dati_ce}"
+        )
+        resp_ce = _chiama_llm(client, _SYSTEM_PROMPT_CE, prompt_ce, model)
+
+        if "error" in resp_ce:
+            print(f"[docling+llm]   ERRORE CE: {resp_ce['error']}")
+            risultato["problemi_layout"].append(f"LLM CE fallito: {resp_ce.get('error', '')}")
+        else:
+            ce_data = resp_ce.get("ce", {})
+            n_ce_out = len(ce_data.get("righe", []))
+            print(f"[docling+llm]   CE risultato: {n_ce_out} righe")
+
+            risultato["sezioni"]["ce"]["righe"] = ce_data.get("righe", [])
+            risultato["problemi_layout"].extend(resp_ce.get("problemi", []))
+
+    # --- Confidence ---
+    n_in = len(sp_righe) + len(ce_righe)
+    n_out = (
+        len(risultato["sezioni"]["sp_attivo"].get("righe", []))
+        + len(risultato["sezioni"]["sp_passivo"].get("righe", []))
+        + len(risultato["sezioni"]["ce"].get("righe", []))
     )
+    # Confidence basata su quante righe sono sopravvissute
+    if n_in > 0:
+        ratio = n_out / n_in
+        confidence = round(min(ratio, 1.0) * 0.95, 2)  # max 0.95
+    else:
+        confidence = 0.0
+    risultato["confidence_estrazione"] = confidence
+    print(f"[docling+llm]   Righe in: {n_in}, out: {n_out}, confidence: {confidence}")
 
-    text = response.content[0].text.strip()
-    return _estrai_json(text)
+    return risultato
 
 
 def _estrai_json(testo: str) -> dict:
