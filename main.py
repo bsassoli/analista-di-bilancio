@@ -16,11 +16,13 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 from agents.estrattore_pdf import estrai_pdf
-from agents.estrattore_numerico import normalizza_estrazione
+from agents.estrattore_numerico import normalizza_estrazione, normalizza_estrazione_bundle
 from agents.estrattore_qualitativo import estrai_qualitativo
 from agents.pipeline import esegui_pipeline, esegui_checker
 from agents.analista import esegui_analisi
 from agents.produttore import esegui_produzione
+from tools.reconciliation import collega_evidenze
+from tools.quality_scorer import calcola_quality_report, stampa_quality_report
 
 
 def analizza_bilancio(
@@ -46,34 +48,71 @@ def analizza_bilancio(
 
     # --- Fase 1: Estrazione PDF ---
     estrattore = "Docling + LLM" if use_docling else "pdfplumber + LLM"
-    print(f"[1/6] Estrazione dal PDF ({estrattore})...")
+    print(f"[1/7] Estrazione dal PDF ({estrattore})...")
     azienda_nome = azienda or "azienda"
+    bundle = None
 
     if use_docling:
         from agents.estrattore_pdf_docling import estrai_pdf_docling
         estrazione_pdf = estrai_pdf_docling(pdf_path)
+        bundle = estrazione_pdf.pop("bundle", None)
     else:
         estrazione_pdf = estrai_pdf(pdf_path)
     if azienda:
         estrazione_pdf["azienda"] = azienda
+        if bundle:
+            bundle.document_profile.company_name = azienda
     azienda_nome = estrazione_pdf.get("azienda", azienda_nome)
 
     if "error" in estrazione_pdf:
         print(f"      ERRORE: {estrazione_pdf['error']}")
         return {"errore": "estrazione_fallita", "dettaglio": estrazione_pdf}
 
-    # --- Fase 2: Normalizzazione numerica ---
-    print("[2/6] Normalizzazione numerica...")
-    schema = normalizza_estrazione(estrazione_pdf)
+    # --- Fase 2: Semantic extraction (deterministic + targeted LLM) ---
+    if bundle:
+        print("[2/7] Estrazione semantica (nota integrativa)...")
+        try:
+            from agents.estrattore_semantico import estrai_semantica
+            evidenze = estrai_semantica(pdf_path, bundle.document_profile)
+            bundle.semantic_evidence = evidenze
+            print(f"      Evidenze: {len(evidenze)} trovate")
+
+            # Link evidence to rows
+            collega_evidenze(bundle)
+            n_hints = len(bundle.classification_hints)
+            n_linked = sum(1 for e in bundle.semantic_evidence if e.related_row_ids)
+            print(f"      Collegate: {n_linked}, Hint: {n_hints}")
+        except Exception as e:
+            print(f"      [WARN] Estrazione semantica fallita: {e}")
+        print()
+
+    # --- Fase 3: Normalizzazione numerica ---
+    print("[3/7] Normalizzazione numerica...")
+    if bundle and bundle.extracted_rows:
+        schema = normalizza_estrazione_bundle(bundle)
+    else:
+        schema = normalizza_estrazione(estrazione_pdf)
     schema["azienda"] = azienda_nome
 
     print(f"      Azienda: {azienda_nome}")
     print(f"      Formato: {schema.get('metadata', {}).get('formato', '?')}")
     print(f"      Voci SP: {len(schema.get('sp', []))}, Voci CE: {len(schema.get('ce', []))}")
+    if schema.get("di_cui_sp"):
+        print(f"      Di cui SP: {len(schema['di_cui_sp'])}, Di cui CE: {len(schema.get('di_cui_ce', []))}")
     print()
 
-    # --- Fase 3: Estrazione qualitativa (LLM) ---
-    print("[3/6] Estrazione qualitativa (nota integrativa)...")
+    # --- Fase 4: Extraction quality gate ---
+    if bundle:
+        print("[4/7] Quality gate estrazione...")
+        qr = calcola_quality_report(bundle)
+        bundle.quality_report = qr
+        print(f"      Severity: {qr.severity}")
+        print(f"      Rows con valori: {qr.rows_with_values_pct:.0%}")
+        print(f"      Copertura semantica: {sum(qr.semantic_coverage.values())}/{len(qr.semantic_coverage)}")
+        print()
+
+    # --- Fase 5: Estrazione qualitativa legacy (LLM) ---
+    print("[5/7] Estrazione qualitativa (nota integrativa)...")
     try:
         qualitativo = estrai_qualitativo(pdf_path, schema)
         if qualitativo.get("flags"):
@@ -88,9 +127,9 @@ def analizza_bilancio(
         qualitativo = {}
     print()
 
-    # --- Fase 4: Checker + Riclassifica ---
-    print("[4/6] Checker e riclassifica...")
-    pipeline_result = esegui_pipeline(schema)
+    # --- Fase 6: Checker + Riclassifica ---
+    print("[6/7] Checker e riclassifica...")
+    pipeline_result = esegui_pipeline(schema, bundle=bundle)
 
     severity = pipeline_result.get("severity_finale", "?")
     print(f"      Severity finale: {severity}")
@@ -102,16 +141,16 @@ def analizza_bilancio(
         return pipeline_result
     print()
 
-    # --- Fase 5: Analisi ---
-    print("[5/6] Calcolo indici e analisi...")
+    # --- Fase 7: Analisi ---
+    print("[7/7] Calcolo indici e analisi...")
     analisi = esegui_analisi(pipeline_result)
 
     n_alert = len(analisi.get("alert", []))
     print(f"      Alert: {n_alert}")
     print()
 
-    # --- Fase 6: Produzione output ---
-    print("[6/6] Generazione Excel e Word...")
+    # --- Output ---
+    print("[output] Generazione Excel e Word...")
     output = esegui_produzione(pipeline_result, analisi)
 
     elapsed = time.time() - t0
