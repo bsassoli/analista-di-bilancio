@@ -1,15 +1,24 @@
 """Estrattore numerico: converte l'output dell'estrattore PDF in schema normalizzato.
 
 Input: output strutturato dell'estrattore PDF (righe con valori stringa)
+       oppure ExtractionBundle tipizzato
 Output: schema normalizzato JSON (valori interi, ID, aggregati)
 """
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
+from typing import Optional
 
 from tools.pdf_parser import normalizza_numero, genera_id
 from tools.calcolatori import variazione_yoy
 from tools.schema import crea_voce
+from tools.evidence_schema import (
+    ExtractionBundle,
+    ExtractedRow,
+    ClassificationHint,
+)
 
 
 def _converti_sezione(righe: list[dict], anni: list[str]) -> list[dict]:
@@ -179,6 +188,210 @@ def normalizza_estrazione(estrazione_pdf: dict) -> dict:
             "totale_passivo_dichiarato": totale_passivo,
             "utile_dichiarato": utile,
             "formato": formato,
+        },
+    }
+
+    return schema
+
+
+# ---------------------------------------------------------------------------
+# Bundle-aware normalisation
+# ---------------------------------------------------------------------------
+
+def _converti_extracted_rows(
+    rows: list[ExtractedRow],
+    anni: list[str],
+    hints: Optional[list[ClassificationHint]] = None,
+) -> tuple[list[dict], list[dict]]:
+    """Convert typed ExtractedRow objects into normalised voce dicts.
+
+    Unlike _converti_sezione, this:
+    - Preserves di_cui rows as separate metadata entries
+    - Attaches classification hints as extra metadata
+    - Tracks extraction_method and source_page per voce
+
+    Returns:
+        (voci, di_cui_voci) — main rows and informative di_cui rows.
+    """
+    hints_map: dict[str, list[ClassificationHint]] = {}
+    for h in (hints or []):
+        hints_map.setdefault(h.target_row_id, []).append(h)
+
+    voci = []
+    di_cui_voci = []
+    ids_visti: set[str] = set()
+
+    for row in rows:
+        label = row.label_raw.strip()
+        if not label:
+            continue
+
+        # Parse values
+        valori_raw = row.values_by_year
+        if not valori_raw or all(not v for v in valori_raw.values()):
+            if row.row_type in ("sezione", "header"):
+                continue
+            continue
+
+        valori: dict[str, int | None] = {}
+        for anno in anni:
+            val_raw = valori_raw.get(anno, "")
+            valori[anno] = normalizza_numero(str(val_raw)) if val_raw else 0
+
+        # ID generation with dedup
+        base_id = row.row_id or genera_id(label)
+        voce_id = base_id
+        if voce_id in ids_visti and row.parent_label:
+            voce_id = genera_id(row.parent_label) + "_" + base_id
+        if voce_id in ids_visti:
+            n = 2
+            while f"{voce_id}_{n}" in ids_visti:
+                n += 1
+            voce_id = f"{voce_id}_{n}"
+        ids_visti.add(voce_id)
+
+        # Map row_type → livello
+        livello_map = {"total": 1, "subtotal": 2, "detail": 3,
+                       "di_cui": 3, "sezione": 1, "header": 1}
+        livello = livello_map.get(row.row_type, 3)
+
+        # Flags
+        flags: list[str] = []
+        anni_vals = [v for v in valori.values() if v is not None and v != 0]
+        if len(anni_vals) >= 2:
+            vals = list(valori.values())
+            if vals[0] is not None and vals[1] is not None and vals[1] != 0:
+                var = variazione_yoy(vals[0], vals[1])
+                if var is not None and abs(var) > 0.3:
+                    flags.append("variazione_significativa_yoy")
+        if any(v is None for v in valori.values()):
+            flags.append("dato_mancante")
+
+        # Attach hint info as flag
+        row_hints = hints_map.get(voce_id, [])
+        if row_hints:
+            flags.append("ha_hint_semantico")
+
+        voce = crea_voce(
+            id=voce_id,
+            label=label,
+            livello=livello,
+            aggregato="",
+            valore=valori,
+            fonte_riga_bilancio=", ".join(row.note_refs) if row.note_refs else "",
+            non_standard=False,
+            flags=flags,
+            note=row.parent_label or "",
+        )
+        # Extra metadata
+        voce["extraction_method"] = row.extraction_method
+        voce["source_page"] = row.source_page
+        voce["section"] = row.section
+        if row_hints:
+            voce["classification_hints"] = [
+                {"target": h.suggested_classification, "confidence": h.confidence,
+                 "rationale": h.rationale_type}
+                for h in row_hints
+            ]
+
+        if row.row_type == "di_cui":
+            di_cui_voci.append(voce)
+        else:
+            voci.append(voce)
+
+    return voci, di_cui_voci
+
+
+def normalizza_estrazione_bundle(bundle: ExtractionBundle) -> dict:
+    """Convert an ExtractionBundle into the normalised schema.
+
+    This is the evidence-aware version of normalizza_estrazione().
+    It uses DocumentProfile for metadata instead of hardcoding,
+    preserves di_cui rows, and attaches classification hints.
+
+    Args:
+        bundle: ExtractionBundle with extracted_rows, classification_hints,
+                and document_profile populated.
+
+    Returns:
+        Schema normalizzato compatible with the rest of the pipeline,
+        plus extra keys: di_cui_sp, di_cui_ce, extraction_metadata.
+    """
+    profile = bundle.document_profile
+    anni = profile.years_present
+    rows = bundle.extracted_rows
+    hints = bundle.classification_hints
+
+    # Split rows by SP vs CE
+    sp_rows = [r for r in rows if r.section in ("sp_attivo", "sp_passivo")]
+    ce_rows = [r for r in rows if r.section == "ce"]
+
+    voci_sp, di_cui_sp = _converti_extracted_rows(sp_rows, anni, hints)
+    voci_ce, di_cui_ce = _converti_extracted_rows(ce_rows, anni, hints)
+
+    # Find totals
+    totale_attivo: dict[str, int | None] = {}
+    totale_passivo: dict[str, int | None] = {}
+    utile: dict[str, int | None] = {}
+
+    for v in voci_sp:
+        label_lower = v["label"].lower()
+        if "totale attivo" in label_lower or "totale attivit" in label_lower:
+            totale_attivo = v["valore"]
+        if "totale passivo" in label_lower or "totale patrimonio netto e passivit" in label_lower:
+            totale_passivo = v["valore"]
+
+    for v in voci_ce:
+        vid = v["id"].lower()
+        label_lower = v["label"].lower()
+        if "consolidat" in vid and ("utile" in vid or "perdita" in vid):
+            utile = v["valore"]
+            break
+        if "risultato_netto_d_esercizio" in vid and "funzionamento" not in vid and "complessivo" not in vid:
+            utile = v["valore"]
+            break
+        if ("utile" in label_lower and "esercizio" in label_lower
+                and "terzi" not in label_lower and "complessivo" not in label_lower
+                and "funzionamento" not in label_lower):
+            utile = v["valore"]
+
+    if not utile:
+        for v in voci_sp:
+            label_lower = v["label"].lower()
+            if "utile" in label_lower and "perdita" in label_lower and "terzi" not in label_lower:
+                utile = v["valore"]
+
+    # Infer tipo_bilancio from profile
+    tipo = profile.format_type if profile.format_type != "unknown" else "ordinario"
+
+    # Determine scope label
+    scope = profile.scope if profile.scope != "unknown" else ""
+
+    schema = {
+        "azienda": profile.company_name,
+        "anni_estratti": [int(a) for a in anni],
+        "tipo_bilancio": tipo,
+        "sp": voci_sp,
+        "ce": voci_ce,
+        "di_cui_sp": di_cui_sp,
+        "di_cui_ce": di_cui_ce,
+        "metadata": {
+            "pagine_sp": sorted(profile.page_map.get("sp", [])),
+            "pagine_ce": sorted(profile.page_map.get("ce", [])),
+            "totale_attivo_dichiarato": totale_attivo,
+            "totale_passivo_dichiarato": totale_passivo,
+            "utile_dichiarato": utile,
+            "formato": profile.accounting_standard,
+            "scope": scope,
+        },
+        "extraction_metadata": {
+            "n_rows_sp": len(voci_sp),
+            "n_rows_ce": len(voci_ce),
+            "n_di_cui_sp": len(di_cui_sp),
+            "n_di_cui_ce": len(di_cui_ce),
+            "n_hints": len(hints),
+            "n_evidence": len(bundle.semantic_evidence),
+            "n_ambiguities": len(bundle.unresolved_ambiguities),
         },
     }
 
