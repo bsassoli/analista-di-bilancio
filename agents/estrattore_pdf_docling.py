@@ -139,6 +139,89 @@ def _chiama_llm(client, system: str, dati: str, model: str, max_tokens: int = 16
     return _estrai_json(text)
 
 
+def _chiama_llm_con_retry(
+    client, system: str, dati: str, model: str, feedback: str,
+    max_tokens: int = 16384,
+) -> dict:
+    """Chiamata LLM con un turno di retry via feedback (user→assistant→user)."""
+    first = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=system,
+        messages=[{"role": "user", "content": dati}],
+    )
+    first_text = first.content[0].text.strip()
+    first_json = _estrai_json(first_text)
+
+    # Secondo turno con feedback
+    response = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=system,
+        messages=[
+            {"role": "user", "content": dati},
+            {"role": "assistant", "content": first_text},
+            {"role": "user", "content": feedback},
+        ],
+    )
+    text = response.content[0].text.strip()
+    return _estrai_json(text)
+
+
+def _verifica_quadratura_sp(resp_sp: dict, anni: list[str]) -> Optional[str]:
+    """Verifica veloce della quadratura SP dopo la chiamata LLM.
+
+    Returns:
+        None se ok, stringa di feedback per retry se ko.
+    """
+    from tools.pdf_parser import normalizza_numero
+
+    errori = []
+    for anno in anni:
+        totale_attivo = None
+        totale_passivo = None
+
+        for riga in resp_sp.get("sp_attivo", {}).get("righe", []):
+            label = riga.get("label", "").lower()
+            if "totale attivo" in label or "totale attivit" in label:
+                val = normalizza_numero(str(riga.get("valori", {}).get(anno, "")))
+                if val is not None:
+                    totale_attivo = val
+
+        for riga in resp_sp.get("sp_passivo", {}).get("righe", []):
+            label = riga.get("label", "").lower()
+            if "totale passivo" in label or "totale patrimonio netto e passiv" in label:
+                val = normalizza_numero(str(riga.get("valori", {}).get(anno, "")))
+                if val is not None:
+                    totale_passivo = val
+
+        if totale_attivo is not None and totale_passivo is not None:
+            delta = abs(totale_attivo - totale_passivo)
+            if delta > 1:
+                pct = round(delta / max(totale_attivo, totale_passivo, 1) * 100, 1)
+                errori.append(
+                    f"{anno}: attivo={totale_attivo:,} ≠ passivo={totale_passivo:,} "
+                    f"(delta: {delta:,}, {pct}%)"
+                )
+        elif totale_attivo is None and totale_passivo is None:
+            errori.append(f"{anno}: totale attivo e passivo non trovati")
+
+    if not errori:
+        return None
+
+    return (
+        "ERRORE QUADRATURA: lo Stato Patrimoniale non quadra. "
+        "Attivo DEVE essere uguale a Passivo+PN.\n"
+        + "\n".join(f"  - {e}" for e in errori)
+        + "\n\nPROBABILI CAUSE:\n"
+        "- Righe mancanti nell'attivo o nel passivo (controlla che TUTTE le righe siano presenti)\n"
+        "- Righe attribuite alla sezione sbagliata (es. passività classificate come attivo)\n"
+        "- Patrimonio netto mancante dal passivo\n\n"
+        "Riprova: restituisci il JSON completo con TUTTE le righe nella sezione corretta. "
+        "Il totale attivo DEVE essere uguale al totale passivo+PN."
+    )
+
+
 def _mapping_semantico(
     sp_righe: list[dict],
     ce_righe: list[dict],
@@ -149,6 +232,7 @@ def _mapping_semantico(
     """Invia righe estratte da Docling a Claude per mapping semantico.
 
     Split in 2 chiamate separate (SP e CE) per evitare troncamenti.
+    Retry automatico SP se la quadratura non torna.
     """
     client = crea_client()
 
@@ -163,7 +247,7 @@ def _mapping_semantico(
         "problemi_layout": [],
     }
 
-    # --- Chiamata SP ---
+    # --- Chiamata SP (con retry su quadratura) ---
     if sp_righe:
         dati_sp = json.dumps({
             "formato": formato,
@@ -179,6 +263,27 @@ def _mapping_semantico(
             f"Separale in sp_attivo e sp_passivo.\n\n{dati_sp}"
         )
         resp_sp = _chiama_llm(client, _SYSTEM_PROMPT_SP, prompt_sp, model)
+
+        if "error" not in resp_sp:
+            # Verifica quadratura e retry se necessario
+            feedback = _verifica_quadratura_sp(resp_sp, anni)
+            if feedback:
+                n_att = len(resp_sp.get("sp_attivo", {}).get("righe", []))
+                n_pas = len(resp_sp.get("sp_passivo", {}).get("righe", []))
+                print(f"[docling+llm]   SP tentativo 1: {n_att} attivo + {n_pas} passivo (quadratura KO)")
+                print(f"[docling+llm]   Retry SP con feedback quadratura...")
+                resp_sp2 = _chiama_llm_con_retry(
+                    client, _SYSTEM_PROMPT_SP, prompt_sp, model, feedback
+                )
+                if "error" not in resp_sp2:
+                    feedback2 = _verifica_quadratura_sp(resp_sp2, anni)
+                    if feedback2 is None:
+                        print(f"[docling+llm]   Retry OK: quadratura corretta")
+                        resp_sp = resp_sp2
+                    else:
+                        # Usa il risultato migliore (meno delta)
+                        print(f"[docling+llm]   Retry: quadratura ancora KO, uso risultato migliore")
+                        resp_sp = _scegli_migliore_sp(resp_sp, resp_sp2, anni)
 
         if "error" in resp_sp:
             print(f"[docling+llm]   ERRORE SP: {resp_sp['error']}")
@@ -243,6 +348,33 @@ def _mapping_semantico(
     print(f"[docling+llm]   Righe in: {n_in}, out: {n_out}, confidence: {confidence}")
 
     return risultato
+
+
+def _scegli_migliore_sp(resp1: dict, resp2: dict, anni: list[str]) -> dict:
+    """Confronta due risposte SP e restituisce quella con delta quadratura minore."""
+    from tools.pdf_parser import normalizza_numero
+
+    def _delta_totale(resp):
+        tot = 0
+        for anno in anni:
+            att = pas = None
+            for r in resp.get("sp_attivo", {}).get("righe", []):
+                lab = r.get("label", "").lower()
+                if "totale attivo" in lab or "totale attivit" in lab:
+                    att = normalizza_numero(str(r.get("valori", {}).get(anno, "")))
+            for r in resp.get("sp_passivo", {}).get("righe", []):
+                lab = r.get("label", "").lower()
+                if "totale passivo" in lab or "totale patrimonio netto e passiv" in lab:
+                    pas = normalizza_numero(str(r.get("valori", {}).get(anno, "")))
+            if att is not None and pas is not None:
+                tot += abs(att - pas)
+            else:
+                tot += 10**12  # penalità per totali mancanti
+        return tot
+
+    d1 = _delta_totale(resp1)
+    d2 = _delta_totale(resp2)
+    return resp2 if d2 < d1 else resp1
 
 
 def _estrai_json(testo: str) -> dict:

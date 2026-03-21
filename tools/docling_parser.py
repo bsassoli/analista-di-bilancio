@@ -180,7 +180,7 @@ def identifica_tabelle_prospetto(path: str) -> dict:
         # CE: contiene "risultato operativo" o "ebitda" o "conto economico"
         # Ma esclude tabelle che iniziano con voci SP (misclassificazione)
         is_ce = not is_rendiconto and any(kw in testo_tabella for kw in [
-            "risultato operativo", "ebitda", "ebit",
+            "risultato operativo", "ebitda", " ebit ",
             "risultato netto", "conto economico",
             "valore della produzione",
             "risultato prima delle imposte",
@@ -191,7 +191,7 @@ def identifica_tabelle_prospetto(path: str) -> dict:
             if any(kw in prima_label for kw in [
                 "attività non correnti", "attivo", "immobilizzazion",
                 "attività correnti", "disponibilità di cassa",
-                "posizione finanziaria",
+                "posizione finanziaria", "patrimonio netto", "passivo",
             ]):
                 is_ce = False
 

@@ -140,9 +140,11 @@ class TestMappingSemantico:
         risposta_sp = {
             "sp_attivo": {"righe": [
                 {"label": "Immobilizzazioni", "valori": {"2024": "1000"}, "livello": "dettaglio"},
+                {"label": "Totale attivo", "valori": {"2024": "1000"}, "livello": "totale"},
             ]},
             "sp_passivo": {"righe": [
                 {"label": "Patrimonio netto", "valori": {"2024": "1000"}, "livello": "totale"},
+                {"label": "Totale passivo e patrimonio netto", "valori": {"2024": "1000"}, "livello": "totale"},
             ]},
             "problemi": [],
         }
@@ -153,7 +155,7 @@ class TestMappingSemantico:
             "problemi": [],
         }
 
-        # Mock restituisce risposte diverse per le 2 chiamate
+        # Mock restituisce risposte diverse per le 2 chiamate (SP + CE)
         mock_resp_sp = MagicMock()
         mock_resp_sp.content = [MagicMock(text=json.dumps(risposta_sp))]
         mock_resp_ce = MagicMock()
@@ -164,21 +166,26 @@ class TestMappingSemantico:
             sp_righe=[{"label": "Test", "valori": {"2024": "100"}}],
             ce_righe=[{"label": "Ricavi", "valori": {"2024": "5000"}}],
             formato="IFRS",
-            anni=["2024", "2023"],
+            anni=["2024"],
         )
 
         assert "sezioni" in result
-        assert len(result["sezioni"]["sp_attivo"]["righe"]) == 1
-        assert len(result["sezioni"]["sp_passivo"]["righe"]) == 1
+        assert len(result["sezioni"]["sp_attivo"]["righe"]) == 2
+        assert len(result["sezioni"]["sp_passivo"]["righe"]) == 2
         assert len(result["sezioni"]["ce"]["righe"]) == 1
         assert result["confidence_estrazione"] > 0
 
     @patch("agents.estrattore_pdf_docling.crea_client")
     def test_mapping_sp_only(self, mock_client):
-        """Se non ci sono righe CE, fa solo la chiamata SP."""
+        """Se non ci sono righe CE, fa solo la chiamata SP (no retry se quadra)."""
         risposta_sp = {
-            "sp_attivo": {"righe": [{"label": "A", "valori": {"2024": "1"}, "livello": "dettaglio"}]},
-            "sp_passivo": {"righe": []},
+            "sp_attivo": {"righe": [
+                {"label": "A", "valori": {"2024": "100"}, "livello": "dettaglio"},
+                {"label": "Totale attivo", "valori": {"2024": "100"}, "livello": "totale"},
+            ]},
+            "sp_passivo": {"righe": [
+                {"label": "Totale passivo e patrimonio netto", "valori": {"2024": "100"}, "livello": "totale"},
+            ]},
             "problemi": [],
         }
         mock_resp = MagicMock()
@@ -186,15 +193,15 @@ class TestMappingSemantico:
         mock_client.return_value.messages.create.return_value = mock_resp
 
         result = _mapping_semantico(
-            sp_righe=[{"label": "A", "valori": {"2024": "1"}}],
+            sp_righe=[{"label": "A", "valori": {"2024": "100"}}],
             ce_righe=[],
             formato="IFRS",
             anni=["2024"],
         )
 
-        assert len(result["sezioni"]["sp_attivo"]["righe"]) == 1
+        assert len(result["sezioni"]["sp_attivo"]["righe"]) == 2
         assert len(result["sezioni"]["ce"]["righe"]) == 0
-        # Solo 1 chiamata (SP), non 2
+        # Solo 1 chiamata (SP), no retry perché quadra
         assert mock_client.return_value.messages.create.call_count == 1
 
     @patch("agents.estrattore_pdf_docling.crea_client")

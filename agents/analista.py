@@ -41,11 +41,11 @@ def _estrai_valori_anno(risultato_anno: dict) -> dict:
     pfn_totale = pas["pfn"]["totale"]
     debiti_op = pas["debiti_operativi"]["totale"]
 
-    crediti_comm = ccon_det["crediti_commerciali"]
-    rimanenze = ccon_det["rimanenze"]
-    liquidita = pfn_det["disponibilita_liquide_sottratte"]
-    debiti_fin_lungo = pfn_det["debiti_finanziari_lungo"]
-    debiti_fin_breve = pfn_det["debiti_finanziari_breve"]
+    crediti_comm = ccon_det.get("crediti_commerciali", 0)
+    rimanenze = ccon_det.get("rimanenze", 0)
+    liquidita = pfn_det.get("disponibilita_liquide_sottratte", 0)
+    debiti_fin_lungo = pfn_det.get("debiti_finanziari_lungo", 0)
+    debiti_fin_breve = pfn_det.get("debiti_finanziari_breve", 0)
 
     # Debiti a breve totali = debiti finanziari breve + debiti operativi
     debiti_breve_totali = debiti_fin_breve + debiti_op
