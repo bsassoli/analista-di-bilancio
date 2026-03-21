@@ -250,7 +250,9 @@ def identifica_tabelle_prospetto(path: str) -> dict:
     }
 
 
-def tabella_a_righe_bilancio(df, formato: str = "IFRS") -> list[dict]:
+def tabella_a_righe_bilancio(
+    df, formato: str = "IFRS", source_page: int | None = None,
+) -> list[dict]:
     """Converte un DataFrame Docling in righe di bilancio strutturate.
 
     Fase deterministica: estrae label, valori, gerarchia dalla tabella.
@@ -259,9 +261,11 @@ def tabella_a_righe_bilancio(df, formato: str = "IFRS") -> list[dict]:
     Args:
         df: DataFrame pandas da Docling.
         formato: "IFRS" o "OIC_ordinario" per guidare il parsing.
+        source_page: 1-based page number where this table was found.
 
     Returns:
-        Lista di dict con: label, valori (dict anno→stringa), livello, nota_ref.
+        Lista di dict con: label, valori (dict anno→stringa), livello,
+        nota_ref, genitore, source_page.
     """
     righe = []
     cols = list(df.columns)
@@ -354,6 +358,7 @@ def tabella_a_righe_bilancio(df, formato: str = "IFRS") -> list[dict]:
             "livello": livello,
             "nota_ref": nota_ref,
             "genitore": None,
+            "source_page": source_page,
         })
 
     return righe

@@ -19,6 +19,12 @@ from tools.docling_parser import (
     identifica_tabelle_prospetto,
     tabella_a_righe_bilancio,
 )
+from tools.evidence_schema import (
+    DocumentProfile,
+    ExtractedRow,
+    ExtractionBundle,
+)
+from tools.document_recon import classifica_pagine
 from agents.base import crea_client
 
 
@@ -41,19 +47,19 @@ def _estrai_struttura(pdf_path: str) -> dict:
     print(f"[docling]   SP: {len(risultato['sp_tabelle'])} tabelle")
     print(f"[docling]   CE: {len(risultato['ce_tabelle'])} tabelle")
 
-    # Converti tabelle SP in righe di bilancio
+    # Converti tabelle SP in righe di bilancio (con provenienza pagina)
     sp_righe = []
     sp_pagine = []
     for tab in risultato["sp_tabelle"]:
-        righe = tabella_a_righe_bilancio(tab["dataframe"], formato)
+        righe = tabella_a_righe_bilancio(tab["dataframe"], formato, source_page=tab["pagina"])
         sp_righe.extend(righe)
         sp_pagine.append(tab["pagina"])
 
-    # Converti tabelle CE in righe di bilancio
+    # Converti tabelle CE in righe di bilancio (con provenienza pagina)
     ce_righe = []
     ce_pagine = []
     for tab in risultato["ce_tabelle"]:
-        righe = tabella_a_righe_bilancio(tab["dataframe"], formato)
+        righe = tabella_a_righe_bilancio(tab["dataframe"], formato, source_page=tab["pagina"])
         ce_righe.extend(righe)
         ce_pagine.append(tab["pagina"])
 
@@ -478,6 +484,96 @@ def _valida_estrazione(risultato: dict, anni: list[str]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Conversione legacy dict → ExtractionBundle
+# ---------------------------------------------------------------------------
+
+def _righe_to_extracted_rows(
+    righe: list[dict],
+    section: str,
+    extraction_method: str = "docling+llm",
+) -> list[ExtractedRow]:
+    """Converte righe legacy (dict) in ExtractedRow tipizzate."""
+    from tools.pdf_parser import genera_id
+
+    rows = []
+    for r in righe:
+        label = r.get("label", "")
+        note_refs = []
+        if r.get("nota_ref"):
+            note_refs = [str(r["nota_ref"])]
+
+        # Map livello → row_type
+        livello = r.get("livello", "dettaglio")
+        type_map = {
+            "dettaglio": "detail",
+            "totale": "total",
+            "subtotale": "subtotal",
+            "sezione": "sezione",
+            "di_cui": "di_cui",
+        }
+        row_type = type_map.get(livello, "detail")
+
+        rows.append(ExtractedRow(
+            section=section,
+            label_raw=label,
+            label_normalized=genera_id(label) if label else "",
+            values_by_year=r.get("valori", {}),
+            row_type=row_type,
+            parent_label=r.get("genitore"),
+            note_refs=note_refs,
+            source_page=r.get("source_page"),
+            extraction_method=extraction_method,
+            row_id=genera_id(label) if label else "",
+        ))
+    return rows
+
+
+def risultato_to_bundle(
+    risultato: dict,
+    profile: Optional[DocumentProfile] = None,
+) -> ExtractionBundle:
+    """Converte il dict legacy di estrazione in un ExtractionBundle.
+
+    Args:
+        risultato: Output di estrai_pdf_docling() o estrai_pdf().
+        profile: DocumentProfile (se None, ne crea uno minimale).
+
+    Returns:
+        ExtractionBundle con extracted_rows popolati.
+    """
+    sezioni = risultato.get("sezioni", {})
+    anni = risultato.get("anni_presenti", [])
+    formato = risultato.get("formato_bilancio", "unknown")
+
+    # Build profile if not provided
+    if profile is None:
+        sp_pagine = sezioni.get("sp_attivo", {}).get("pagine", [])
+        ce_pagine = sezioni.get("ce", {}).get("pagine", [])
+        profile = DocumentProfile(
+            company_name=risultato.get("azienda", ""),
+            years_present=anni,
+            accounting_standard=formato if formato in ("IFRS", "OIC") else "unknown",
+            scope="unknown",
+            format_type="ordinario",
+            page_map={"sp": sp_pagine, "ce": ce_pagine, "nota_integrativa": [],
+                       "relazione_gestione": [], "other": []},
+        )
+
+    # Convert rows per section
+    rows: list[ExtractedRow] = []
+    for sez_key in ("sp_attivo", "sp_passivo", "ce"):
+        sez_data = sezioni.get(sez_key, {})
+        righe = sez_data.get("righe", [])
+        rows.extend(_righe_to_extracted_rows(righe, sez_key))
+
+    return ExtractionBundle(
+        document_profile=profile,
+        extracted_rows=rows,
+        unresolved_ambiguities=risultato.get("problemi_layout", []),
+    )
+
+
+# ---------------------------------------------------------------------------
 # API pubblica
 # ---------------------------------------------------------------------------
 
@@ -488,6 +584,7 @@ def estrai_pdf_docling(
 ) -> dict:
     """Estrae dati strutturati da un PDF usando Docling + LLM + Validazione.
 
+    Fase 0: Document reconnaissance (pagine, formato, anni)
     Fase 1: Docling estrae tabelle e le classifica
     Fase 2: LLM mappa semanticamente le righe allo schema
     Fase 3: Validazione quadratura e coerenza
@@ -498,10 +595,17 @@ def estrai_pdf_docling(
         model: Modello per il mapping semantico.
 
     Returns:
-        Dict con struttura identica a estrai_pdf() per compatibilità.
+        Dict con struttura legacy per compatibilità.
+        Il dict include anche la chiave "bundle" con l'ExtractionBundle.
     """
     pdf_path = str(Path(pdf_path).resolve())
     print(f"[docling] Estrazione da: {Path(pdf_path).name}")
+
+    # --- Fase 0: Document reconnaissance ---
+    profile = classifica_pagine(pdf_path)
+    if profile.company_name:
+        print(f"[docling]   Azienda rilevata: {profile.company_name}")
+    print(f"[docling]   Standard: {profile.accounting_standard}, Scope: {profile.scope}")
 
     # --- Fase 1: Docling ---
     print("[docling] Fase 1: Estrazione strutturale con Docling...")
@@ -547,6 +651,10 @@ def estrai_pdf_docling(
 
     conf = risultato.get("confidence_estrazione", "?")
     print(f"[docling]   Completato (confidence: {conf})")
+
+    # --- Build ExtractionBundle ---
+    bundle = risultato_to_bundle(risultato, profile)
+    risultato["bundle"] = bundle
 
     return risultato
 

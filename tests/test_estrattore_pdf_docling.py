@@ -11,6 +11,16 @@ from agents.estrattore_pdf_docling import (
     _estrai_json,
     estrai_pdf_docling,
 )
+from tools.evidence_schema import DocumentProfile
+
+
+def _mock_profile():
+    return DocumentProfile(
+        company_name="Test", years_present=["2024"],
+        accounting_standard="IFRS", scope="unknown",
+        format_type="ordinario", page_map={"sp": [], "ce": [], "nota_integrativa": [],
+                                            "relazione_gestione": [], "other": []},
+    )
 
 
 class TestEstraiJson:
@@ -233,10 +243,12 @@ class TestMappingSemantico:
 class TestPipelineCompleta:
     """Test per estrai_pdf_docling end-to-end (tutto mockato)."""
 
+    @patch("agents.estrattore_pdf_docling.classifica_pagine")
     @patch("agents.estrattore_pdf_docling._valida_estrazione")
     @patch("agents.estrattore_pdf_docling._mapping_semantico")
     @patch("agents.estrattore_pdf_docling._estrai_struttura")
-    def test_pipeline_ok(self, mock_struttura, mock_mapping, mock_valida):
+    def test_pipeline_ok(self, mock_struttura, mock_mapping, mock_valida, mock_recon):
+        mock_recon.return_value = _mock_profile()
         mock_struttura.return_value = {
             "sp_righe": [{"label": "V", "valori": {"2024": "1"}}],
             "ce_righe": [{"label": "R", "valori": {"2024": "2"}}],
@@ -263,9 +275,16 @@ class TestPipelineCompleta:
         # Pagine arricchite
         assert result["sezioni"]["sp_attivo"]["pagine"] == [52]
         assert result["sezioni"]["ce"]["pagine"] == [54]
+        # ExtractionBundle included
+        assert "bundle" in result
+        bundle = result["bundle"]
+        assert bundle.document_profile.company_name == "Test"
+        assert bundle.document_profile.accounting_standard == "IFRS"
 
+    @patch("agents.estrattore_pdf_docling.classifica_pagine")
     @patch("agents.estrattore_pdf_docling._estrai_struttura")
-    def test_pipeline_nessun_prospetto(self, mock_struttura):
+    def test_pipeline_nessun_prospetto(self, mock_struttura, mock_recon):
+        mock_recon.return_value = _mock_profile()
         mock_struttura.return_value = {
             "sp_righe": [],
             "ce_righe": [],
@@ -278,10 +297,12 @@ class TestPipelineCompleta:
         result = estrai_pdf_docling("fake.pdf")
         assert "error" in result
 
+    @patch("agents.estrattore_pdf_docling.classifica_pagine")
     @patch("agents.estrattore_pdf_docling._valida_estrazione")
     @patch("agents.estrattore_pdf_docling._mapping_semantico")
     @patch("agents.estrattore_pdf_docling._estrai_struttura")
-    def test_pipeline_con_problemi_validazione(self, mock_struttura, mock_mapping, mock_valida):
+    def test_pipeline_con_problemi_validazione(self, mock_struttura, mock_mapping, mock_valida, mock_recon):
+        mock_recon.return_value = _mock_profile()
         mock_struttura.return_value = {
             "sp_righe": [{"label": "V", "valori": {"2024": "1"}}],
             "ce_righe": [],
