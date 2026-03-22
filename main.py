@@ -141,6 +141,10 @@ def analizza_bilancio(
         return pipeline_result
     print()
 
+    # Attach rendiconto finanziario data for analyst
+    if estrazione_pdf.get("rendiconto_finanziario"):
+        pipeline_result["rendiconto_finanziario"] = estrazione_pdf["rendiconto_finanziario"]
+
     # --- Fase 7: Analisi ---
     print("[7/7] Calcolo indici e analisi...")
     analisi = esegui_analisi(pipeline_result, bundle=bundle)

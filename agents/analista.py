@@ -577,6 +577,70 @@ def _genera_narrative_llm(indici: dict, trend: list, alert: list,
         if deviazioni:
             dati_narrative["deviazioni_riclassifica"] = deviazioni
 
+    # Inject rendiconto finanziario data if available
+    if pipeline_result:
+        rf_data = pipeline_result.get("rendiconto_finanziario", {})
+        rf_righe = rf_data.get("righe", [])
+        if rf_righe:
+            from tools.pdf_parser import normalizza_numero
+            rf_valori: dict[str, dict[str, int | None]] = {}
+            for riga in rf_righe:
+                label = riga.get("label", "").strip()
+                if not label:
+                    continue
+                label_lower = label.lower()
+                valori = riga.get("valori", {})
+                # Extract key cash flow items
+                for anno in anni:
+                    val_raw = valori.get(anno, "")
+                    val = normalizza_numero(str(val_raw)) if val_raw else None
+                    if val is None:
+                        continue
+                    if any(kw in label_lower for kw in [
+                        "flussi finanziari generati dall'attività operativa",
+                        "flusso monetario da attività operativa",
+                        "flusso di cassa generato dall'attività operativa",
+                        "flusso da attività operativa",
+                        "cash flow operativo",
+                    ]):
+                        rf_valori.setdefault("flusso_operativo", {})[anno] = val
+                    elif any(kw in label_lower for kw in [
+                        "flussi finanziari generati dall'attività d'investimento",
+                        "flussi finanziari generati dall'attività di investimento",
+                        "flusso monetario da attività di investimento",
+                        "flusso di cassa generato dall'attività di investimento",
+                        "flusso da attività di investimento",
+                    ]):
+                        rf_valori.setdefault("flusso_investimento", {})[anno] = val
+                    elif any(kw in label_lower for kw in [
+                        "flussi finanziari generati dall'attività finanziaria",
+                        "flussi finanziari generati dall'attività di finanziamento",
+                        "flusso monetario da attività di finanziamento",
+                        "flusso da attività finanziaria",
+                    ]):
+                        rf_valori.setdefault("flusso_finanziamento", {})[anno] = val
+                    elif any(kw in label_lower for kw in [
+                        "investimenti) netti in imm. materiali",
+                        "investimenti in immobilizzazioni materiali",
+                        "incremento di immobilizzazioni materiali",
+                        "acquisto di immobilizzazioni materiali",
+                        "capex",
+                    ]):
+                        rf_valori.setdefault("capex_materiali", {})[anno] = val
+                    elif any(kw in label_lower for kw in [
+                        "investimenti) in imm. immateriali",
+                        "investimenti in immobilizzazioni immateriali",
+                        "incremento di immobilizzazioni immateriali",
+                    ]):
+                        rf_valori.setdefault("capex_immateriali", {})[anno] = val
+                    elif "flussi monetari generati dalla gestione reddituale" in label_lower:
+                        rf_valori.setdefault("flusso_gestione_reddituale", {})[anno] = val
+                    elif "dividendi corrisposti" in label_lower:
+                        rf_valori.setdefault("dividendi", {})[anno] = val
+
+            if rf_valori:
+                dati_narrative["rendiconto_finanziario"] = rf_valori
+
     # Inject semantic evidence from bundle
     if bundle and hasattr(bundle, "semantic_evidence") and bundle.semantic_evidence:
         evidenze_per_tipo: dict[str, list] = {}
@@ -694,7 +758,7 @@ ISTRUZIONI DETTAGLIATE PER OGNI SEZIONE:
 
 "redditivita": Andamento margini con DRIVER ANALYSIS. Non solo cosa è cambiato ma PERCHÉ. Analizzare la struttura costi come % ricavi nel tempo (i dati struttura_costi sono forniti). Identificare leva operativa, pricing power, efficienza. Se ci sono deviazioni IFRS 16 o PPA, calcolare margini adjusted.
 
-"struttura_finanziaria": Come l'azienda si finanzia. Evoluzione PFN. Connessione esplicita: capex/investimenti → finanziamento → debito → sostenibilità. Se flag IFRS 16: segnalare PFN al netto leasing. Dichiarare che l'analisi si basa su saldi di fine anno e il profilo infrannuale potrebbe differire.
+"struttura_finanziaria": Come l'azienda si finanzia. Evoluzione PFN. Connessione esplicita: capex/investimenti → finanziamento → debito → sostenibilità. Se flag IFRS 16: segnalare PFN al netto leasing. Se hai dati dal rendiconto_finanziario: usa flusso operativo, investimento e finanziamento per completare l'analisi. Integra capex (materiali e immateriali) nell'analisi crescita vs mantenimento. Dichiarare che l'analisi si basa su saldi di fine anno e il profilo infrannuale potrebbe differire.
 
 "liquidita": Current/quick ratio e evoluzione. DECOMPOSIZIONE working capital: quale componente guida il cambiamento? Catena causale completa (es. aumento rimanenze → assorbimento cassa → impatto su debito). Giorni crediti vs debiti: chi finanzia chi?
 
@@ -708,6 +772,13 @@ REGOLE:
 - Tono professionale da relazione finanziaria
 - NON usare markdown, solo testo piano
 - Le conclusioni DEVONO terminare con una tesi falsificabile e una variabile chiave
+
+RENDICONTO FINANZIARIO (se presente nel campo "rendiconto_finanziario"):
+- Usa flusso_operativo per validare la qualità degli utili (cash conversion)
+- Usa flusso_investimento e capex_materiali/immateriali per analisi capex
+- Distingui capex di mantenimento vs crescita se possibile
+- Integra flusso_finanziamento nell'evoluzione del debito
+- Calcola Free Cash Flow = flusso operativo + flusso investimento
 
 EVIDENZE SEMANTICHE (se presenti nel campo "evidenze_semantiche"):
 - Usa le informazioni dalla nota integrativa per arricchire l'analisi

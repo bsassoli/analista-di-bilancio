@@ -129,6 +129,7 @@ def identifica_tabelle_prospetto(path: str) -> dict:
 
     sp_tabelle = []
     ce_tabelle = []
+    rf_tabelle = []
     altre_tabelle = []
     segnali_ifrs = 0
     segnali_oic = 0
@@ -215,7 +216,9 @@ def identifica_tabelle_prospetto(path: str) -> dict:
 
         entry = {"pagina": page_no, "dataframe": df, "n_righe": len(df)}
 
-        if is_sp and not is_ce:
+        if is_rendiconto and has_numeri:
+            rf_tabelle.append(entry)
+        elif is_sp and not is_ce:
             sp_tabelle.append(entry)
         elif is_ce and not is_sp:
             ce_tabelle.append(entry)
@@ -238,12 +241,16 @@ def identifica_tabelle_prospetto(path: str) -> dict:
     if len(ce_tabelle) > 3:
         ce_tabelle.sort(key=lambda t: t["n_righe"], reverse=True)
         ce_tabelle = ce_tabelle[:3]
+    if len(rf_tabelle) > 3:
+        rf_tabelle.sort(key=lambda t: t["n_righe"], reverse=True)
+        rf_tabelle = rf_tabelle[:3]
 
     formato = "IFRS" if segnali_ifrs > segnali_oic else "OIC_ordinario"
 
     return {
         "sp_tabelle": sp_tabelle,
         "ce_tabelle": ce_tabelle,
+        "rf_tabelle": rf_tabelle,
         "altre_tabelle": altre_tabelle,
         "formato": formato,
         "n_tabelle_totali": len(list(doc.tables)),

@@ -46,6 +46,7 @@ def _estrai_struttura(pdf_path: str) -> dict:
     print(f"[docling]   Tabelle totali: {risultato['n_tabelle_totali']}")
     print(f"[docling]   SP: {len(risultato['sp_tabelle'])} tabelle")
     print(f"[docling]   CE: {len(risultato['ce_tabelle'])} tabelle")
+    print(f"[docling]   RF: {len(risultato.get('rf_tabelle', []))} tabelle")
 
     # Converti tabelle SP in righe di bilancio (con provenienza pagina)
     sp_righe = []
@@ -63,6 +64,14 @@ def _estrai_struttura(pdf_path: str) -> dict:
         ce_righe.extend(righe)
         ce_pagine.append(tab["pagina"])
 
+    # Converti tabelle Rendiconto Finanziario
+    rf_righe = []
+    rf_pagine = []
+    for tab in risultato.get("rf_tabelle", []):
+        righe = tabella_a_righe_bilancio(tab["dataframe"], formato, source_page=tab["pagina"])
+        rf_righe.extend(righe)
+        rf_pagine.append(tab["pagina"])
+
     # Rileva anni presenti dai valori
     anni = set()
     for righe in (sp_righe, ce_righe):
@@ -71,14 +80,16 @@ def _estrai_struttura(pdf_path: str) -> dict:
                 if re.match(r"^20[12]\d$", anno):
                     anni.add(anno)
 
-    print(f"[docling]   Righe SP: {len(sp_righe)}, Righe CE: {len(ce_righe)}")
+    print(f"[docling]   Righe SP: {len(sp_righe)}, Righe CE: {len(ce_righe)}, Righe RF: {len(rf_righe)}")
     print(f"[docling]   Anni: {sorted(anni)}")
 
     return {
         "sp_righe": sp_righe,
         "ce_righe": ce_righe,
+        "rf_righe": rf_righe,
         "sp_pagine": sp_pagine,
         "ce_pagine": ce_pagine,
+        "rf_pagine": rf_pagine,
         "anni_presenti": sorted(anni),
         "formato": formato,
     }
@@ -649,11 +660,28 @@ def estrai_pdf_docling(
     else:
         print("[docling]   Validazione OK")
 
+    # Add rendiconto finanziario data (no LLM needed — pass through directly)
+    rf_righe = struttura.get("rf_righe", [])
+    if rf_righe:
+        risultato["rendiconto_finanziario"] = {
+            "pagine": struttura.get("rf_pagine", []),
+            "righe": rf_righe,
+        }
+        print(f"[docling]   Rendiconto finanziario: {len(rf_righe)} righe")
+
     conf = risultato.get("confidence_estrazione", "?")
     print(f"[docling]   Completato (confidence: {conf})")
 
     # --- Build ExtractionBundle ---
     bundle = risultato_to_bundle(risultato, profile)
+
+    # Add RF rows to bundle
+    if rf_righe:
+        rf_extracted = _righe_to_extracted_rows(
+            rf_righe, "rendiconto", extraction_method="docling",
+        )
+        bundle.extracted_rows.extend(rf_extracted)
+
     risultato["bundle"] = bundle
 
     return risultato
