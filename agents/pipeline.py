@@ -828,17 +828,68 @@ def _retry_riclassifica_con_feedback(
     return risultato
 
 
+def _score_candidate(risultati: dict[str, Any], anni: list[str]) -> dict:
+    """Score a reclassification candidate for selection.
+
+    Returns dict with: valid (bool), quad_errors (int), avg_confidence,
+    n_unresolved, reasons (list of rejection reasons).
+    """
+    if not risultati:
+        return {"valid": False, "quad_errors": 999, "avg_confidence": 0,
+                "n_unresolved": 999, "reasons": ["no results"]}
+
+    errori = _verifica_quadratura_risultato(risultati)
+    confidences = [r.get("confidence", 0) for r in risultati.values()]
+    avg_conf = sum(confidences) / max(len(confidences), 1)
+    n_unresolved = sum(
+        len(r.get("voci_non_mappate", [])) for r in risultati.values()
+    )
+
+    return {
+        "valid": len(errori) == 0,
+        "quad_errors": len(errori),
+        "avg_confidence": round(avg_conf, 3),
+        "n_unresolved": n_unresolved,
+        "reasons": errori,
+    }
+
+
+def _pick_best_candidate(candidates: list[tuple[str, dict, dict, float]]) -> tuple[str, dict]:
+    """Pick the best reclassification candidate.
+
+    Args:
+        candidates: list of (name, risultati_per_anno, score_dict, elapsed_s)
+
+    Selection logic:
+      1. Valid candidates (quad passes) always beat invalid ones
+      2. Among valid: highest avg_confidence wins
+      3. Among invalid: fewest quad_errors wins
+    """
+    valid = [(n, r, s, t) for n, r, s, t in candidates if s["valid"]]
+    if valid:
+        # Pick highest confidence among valid
+        best = max(valid, key=lambda x: x[2]["avg_confidence"])
+        return best[0], best[1]
+
+    # No valid candidate — pick the one with fewest errors
+    best = min(candidates, key=lambda x: (x[2]["quad_errors"], -x[2]["avg_confidence"]))
+    return best[0], best[1]
+
+
 def esegui_riclassifica(
     schema: dict,
     checker_report: dict,
     bundle: Optional[ExtractionBundle] = None,
 ) -> dict:
-    """Esegue la riclassificazione.
+    """Esegue la riclassificazione con candidate selection.
 
-    Strategia: LLM sempre come path primario per tutti i formati.
-    Se la quadratura fallisce, ritenta con feedback.
-    Fallback: evidence-aware deterministic (if bundle has hints),
-    then plain deterministic.
+    Generates up to 3 candidates:
+      1. LLM (primary)
+      2. LLM retry with feedback (only if #1 fails quadratura)
+      3. Deterministic + evidence (always generated as fallback)
+
+    Picks the best valid candidate. If none pass quadratura, picks
+    the least-bad one.
 
     Args:
         schema: Schema normalizzato JSON.
@@ -848,15 +899,20 @@ def esegui_riclassifica(
     Returns:
         Risultato riclassificazione per tutti gli anni.
     """
+    import time as _time
+
     anni = [str(a) for a in schema.get("anni_estratti", [])]
     azienda = schema.get("azienda", "sconosciuta")
     formato = schema.get("metadata", {}).get("formato", "")
+    hints = bundle.classification_hints if bundle else []
 
-    risultati_per_anno: dict[str, Any] = {}
-    metodo = "llm"
+    # Collect candidates: (name, risultati_per_anno, score, elapsed)
+    candidates: list[tuple[str, dict, dict, float]] = []
+    timing: dict[str, float] = {}
 
-    # --- Tentativo 1: LLM (sempre primario) ---
+    # --- Candidate 1: LLM ---
     print(f"  Metodo: LLM (formato {formato})")
+    t0 = _time.time()
     task_input = _prepara_input_riclassifica(schema, checker_report)
 
     try:
@@ -866,51 +922,90 @@ def esegui_riclassifica(
             max_turns=15,
         )
     except Exception as e:
-        print(f"[WARN] LLM riclassifica exception: {e}. Fallback deterministico.")
+        print(f"  [LLM] Exception: {e}")
         risultato_llm = {"error": str(e)}
 
-    if "error" not in risultato_llm:
-        risultati_per_anno = _estrai_risultati_llm(risultato_llm, anni)
+    elapsed_llm = round(_time.time() - t0, 1)
+    timing["llm"] = elapsed_llm
 
-    # --- Tentativo 2: Retry con feedback se quadratura fallisce ---
-    if risultati_per_anno:
-        errori_quad = _verifica_quadratura_risultato(risultati_per_anno)
-        if errori_quad:
+    risultati_llm: dict[str, Any] = {}
+    if "error" not in risultato_llm:
+        risultati_llm = _estrai_risultati_llm(risultato_llm, anni)
+
+    if risultati_llm:
+        score_llm = _score_candidate(risultati_llm, anni)
+        candidates.append(("llm", risultati_llm, score_llm, elapsed_llm))
+        status = "PASS" if score_llm["valid"] else f"FAIL ({score_llm['quad_errors']} quad errors)"
+        print(f"  [LLM] {status}, confidence={score_llm['avg_confidence']}, tempo={elapsed_llm}s")
+
+        # --- Candidate 2: LLM retry (only if LLM failed quadratura) ---
+        if not score_llm["valid"]:
             print(f"  [RETRY] Quadratura fallita, ritento con feedback...")
+            t1 = _time.time()
             risultato_retry = _retry_riclassifica_con_feedback(
-                schema, checker_report, risultato_llm, errori_quad,
+                schema, checker_report, risultato_llm, score_llm["reasons"],
             )
+            elapsed_retry = round(_time.time() - t1, 1)
+            timing["llm_retry"] = elapsed_retry
+
             if "error" not in risultato_retry:
                 risultati_retry = _estrai_risultati_llm(risultato_retry, anni)
                 if risultati_retry:
-                    errori_retry = _verifica_quadratura_risultato(risultati_retry)
-                    if not errori_retry or len(errori_retry) < len(errori_quad):
-                        risultati_per_anno = risultati_retry
-                        print(f"  [RETRY] Risultato migliorato.")
-                    else:
-                        print(f"  [RETRY] Nessun miglioramento, uso risultato originale.")
+                    score_retry = _score_candidate(risultati_retry, anni)
+                    candidates.append(("llm_retry", risultati_retry, score_retry, elapsed_retry))
+                    status = "PASS" if score_retry["valid"] else f"FAIL ({score_retry['quad_errors']} errors)"
+                    print(f"  [RETRY] {status}, confidence={score_retry['avg_confidence']}, tempo={elapsed_retry}s")
     else:
         if "error" not in risultato_llm:
-            print("[WARN] Risposta LLM non parsabile.")
+            print("  [LLM] Risposta non parsabile.")
 
-    # --- Fallback: evidence-aware deterministic → plain deterministic ---
-    if not risultati_per_anno:
-        hints = bundle.classification_hints if bundle else []
-        if hints:
-            print(f"  [FALLBACK] Uso riclassifica deterministica con {len(hints)} hint semantici.")
-            metodo = "deterministico+evidenze"
-            for anno in anni:
-                risultati_per_anno[anno] = _riclassifica_con_evidenze(schema, anno, hints)
-        else:
-            print(f"  [FALLBACK] Uso riclassifica deterministica.")
-            metodo = "deterministico"
-            for anno in anni:
-                risultati_per_anno[anno] = _riclassifica_deterministico(schema, anno)
+    # --- Candidate 3: Deterministic + evidence (always generated) ---
+    t2 = _time.time()
+    risultati_det: dict[str, Any] = {}
+    if hints:
+        for anno in anni:
+            risultati_det[anno] = _riclassifica_con_evidenze(schema, anno, hints)
+        det_name = "deterministico+evidenze"
+    else:
+        for anno in anni:
+            risultati_det[anno] = _riclassifica_deterministico(schema, anno)
+        det_name = "deterministico"
+    elapsed_det = round(_time.time() - t2, 1)
+    timing[det_name] = elapsed_det
+
+    score_det = _score_candidate(risultati_det, anni)
+    candidates.append((det_name, risultati_det, score_det, elapsed_det))
+    status = "PASS" if score_det["valid"] else f"FAIL ({score_det['quad_errors']} errors)"
+    print(f"  [{det_name.upper()}] {status}, confidence={score_det['avg_confidence']}, tempo={elapsed_det}s")
+
+    # --- Selection ---
+    metodo, risultati_per_anno = _pick_best_candidate(candidates)
+    print(f"  Metodo selezionato: {metodo}")
+
+    # Log rejected candidates
+    rejected = []
+    for name, _, score, elapsed in candidates:
+        if name != metodo:
+            rejected.append({
+                "candidato": name,
+                "valid": score["valid"],
+                "quad_errors": score["quad_errors"],
+                "avg_confidence": score["avg_confidence"],
+                "tempo_s": elapsed,
+                "motivo_scarto": score["reasons"] if not score["valid"] else ["non selezionato (confidence inferiore)"],
+            })
 
     return {
         "azienda": azienda,
         "metodo": metodo,
         "risultati_per_anno": risultati_per_anno,
+        "candidate_selection": {
+            "n_candidates": len(candidates),
+            "selected": metodo,
+            "rejected": rejected,
+            "timing": timing,
+            "total_reclassifica_s": round(sum(timing.values()), 1),
+        },
     }
 
 
