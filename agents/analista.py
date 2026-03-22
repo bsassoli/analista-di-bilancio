@@ -510,7 +510,8 @@ def _genera_narrative_template(indici: dict, trend: list, alert: list,
 def _genera_narrative_llm(indici: dict, trend: list, alert: list,
                            anni: list[str], valori_per_anno: dict,
                            azienda: str,
-                           pipeline_result: dict | None = None) -> dict | None:
+                           pipeline_result: dict | None = None,
+                           bundle=None) -> dict | None:
     """Genera narrative usando Claude con chiamata diretta (no agent loop)."""
     import anthropic
     from agents.base import carica_skill
@@ -576,6 +577,96 @@ def _genera_narrative_llm(indici: dict, trend: list, alert: list,
         if deviazioni:
             dati_narrative["deviazioni_riclassifica"] = deviazioni
 
+    # Inject semantic evidence from bundle
+    if bundle and hasattr(bundle, "semantic_evidence") and bundle.semantic_evidence:
+        evidenze_per_tipo: dict[str, list] = {}
+        for ev in bundle.semantic_evidence:
+            evidenze_per_tipo.setdefault(ev.evidence_type, []).append(ev)
+
+        evidenze_summary: dict[str, Any] = {}
+
+        # Debt maturity
+        debt_evs = evidenze_per_tipo.get("debt", [])
+        if debt_evs:
+            best = max(debt_evs, key=lambda e: e.confidence)
+            evidenze_summary["scadenza_debiti"] = best.normalized_hint
+            evidenze_summary["scadenza_debiti_snippet"] = best.snippet[:200]
+
+        # Lease / IFRS 16
+        lease_evs = evidenze_per_tipo.get("lease", [])
+        if lease_evs:
+            amounts = {}
+            for ev in lease_evs:
+                amounts.update({k: v for k, v in ev.normalized_hint.items() if v})
+            if amounts:
+                evidenze_summary["ifrs16"] = amounts
+
+        # Related party
+        rp_evs = evidenze_per_tipo.get("related_party", [])
+        if rp_evs:
+            evidenze_summary["parti_correlate"] = [
+                {"snippet": ev.snippet[:150], "pagina": ev.source_page}
+                for ev in rp_evs[:3]
+            ]
+
+        # Funds
+        fund_evs = evidenze_per_tipo.get("fund", [])
+        if fund_evs:
+            evidenze_summary["fondi"] = [
+                {"natura": ev.normalized_hint.get("natura", "?"),
+                 "importo": ev.normalized_hint.get("importo"),
+                 "snippet": ev.snippet[:150]}
+                for ev in fund_evs[:5]
+            ]
+
+        # Going concern
+        gc_evs = evidenze_per_tipo.get("going_concern", [])
+        if gc_evs:
+            evidenze_summary["going_concern"] = {
+                "rilevato": True,
+                "snippet": gc_evs[0].snippet[:200],
+            }
+
+        # Non-recurring
+        nr_evs = evidenze_per_tipo.get("non_recurring", [])
+        if nr_evs:
+            evidenze_summary["non_ricorrenti"] = [
+                {"importo": ev.normalized_hint.get("importo"),
+                 "snippet": ev.snippet[:150]}
+                for ev in nr_evs[:5]
+            ]
+
+        # Accounting policy
+        ap_evs = evidenze_per_tipo.get("accounting_policy", [])
+        if ap_evs:
+            evidenze_summary["criteri_valutazione"] = [
+                {"voce": ev.normalized_hint.get("voce", ""),
+                 "metodo": ev.normalized_hint.get("metodo", ""),
+                 "snippet": ev.snippet[:150]}
+                for ev in ap_evs[:5]
+            ]
+
+        # Tax
+        tax_evs = evidenze_per_tipo.get("tax", [])
+        if tax_evs:
+            evidenze_summary["fiscalita_differita"] = {
+                "n_segnali": len(tax_evs),
+                "snippet": tax_evs[0].snippet[:150],
+            }
+
+        if evidenze_summary:
+            dati_narrative["evidenze_semantiche"] = evidenze_summary
+
+        # Quality report summary
+        if bundle.quality_report:
+            qr = bundle.quality_report
+            dati_narrative["quality_extraction"] = {
+                "severity": qr.severity,
+                "rows_con_valori": qr.rows_with_values_pct,
+                "copertura_semantica": {k: v for k, v in qr.semantic_coverage.items()},
+                "quadratura_delta": qr.quadratura_delta,
+            }
+
     dati = json.dumps(dati_narrative, ensure_ascii=False, indent=2)
 
     # Carica lo skill come base del system prompt
@@ -617,6 +708,17 @@ REGOLE:
 - Tono professionale da relazione finanziaria
 - NON usare markdown, solo testo piano
 - Le conclusioni DEVONO terminare con una tesi falsificabile e una variabile chiave
+
+EVIDENZE SEMANTICHE (se presenti nel campo "evidenze_semantiche"):
+- Usa le informazioni dalla nota integrativa per arricchire l'analisi
+- scadenza_debiti: integra nell'analisi del debito (breve vs lungo termine)
+- ifrs16: usa per calcolare EBITDA/EBIT adjusted e PFN adjusted
+- fondi: distingui fondi operativi da finanziari e discuti la natura
+- parti_correlate: segnala rischi di concentrazione o dipendenza
+- non_ricorrenti: identifica e quantifica componenti non ricorrenti nel CE
+- going_concern: se rilevato, discutilo con priorità assoluta
+- criteri_valutazione: menziona le policy rilevanti (es. metodo rimanenze, aliquote ammortamento)
+- fiscalita_differita: commenta l'impatto delle imposte differite se rilevante
 """
 
     response = client.messages.create(
@@ -666,7 +768,8 @@ REGOLE:
 def _genera_narrative(indici: dict, trend: list, alert: list,
                        anni: list[str], valori_per_anno: dict,
                        azienda: str,
-                       pipeline_result: dict | None = None) -> dict:
+                       pipeline_result: dict | None = None,
+                       bundle=None) -> dict:
     """Genera narrative, con fallback se API key non disponibile."""
     # Prova con LLM se API key presente
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -674,7 +777,7 @@ def _genera_narrative(indici: dict, trend: list, alert: list,
         try:
             result = _genera_narrative_llm(
                 indici, trend, alert, anni, valori_per_anno, azienda,
-                pipeline_result=pipeline_result,
+                pipeline_result=pipeline_result, bundle=bundle,
             )
             if result is not None:
                 return result
@@ -690,11 +793,12 @@ def _genera_narrative(indici: dict, trend: list, alert: list,
 # Funzione principale
 # ---------------------------------------------------------------------------
 
-def esegui_analisi(pipeline_result: dict) -> dict:
+def esegui_analisi(pipeline_result: dict, bundle=None) -> dict:
     """Esegue l'analisi completa su un pipeline_result.
 
     Args:
         pipeline_result: Output della pipeline di riclassifica.
+        bundle: Optional ExtractionBundle with semantic evidence.
 
     Returns:
         Dict con la struttura completa dell'analisi come da skill_analisi.md.
@@ -716,7 +820,7 @@ def esegui_analisi(pipeline_result: dict) -> dict:
 
     # 5. Genera narrative
     narrative = _genera_narrative(indici, trend, alert, anni, valori_per_anno, azienda,
-                                  pipeline_result=pipeline_result)
+                                  pipeline_result=pipeline_result, bundle=bundle)
 
     # 6. Calcola CAGR ricavi ed EBITDA se possibile
     cagr_info = {}

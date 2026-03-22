@@ -143,7 +143,7 @@ def analizza_bilancio(
 
     # --- Fase 7: Analisi ---
     print("[7/7] Calcolo indici e analisi...")
-    analisi = esegui_analisi(pipeline_result)
+    analisi = esegui_analisi(pipeline_result, bundle=bundle)
 
     n_alert = len(analisi.get("alert", []))
     print(f"      Alert: {n_alert}")
