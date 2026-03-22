@@ -76,6 +76,13 @@ _MINORITY_ROW_KEYWORDS = [
     "quota di pertinenza", "capitale e riserve di terzi",
 ]
 
+_NON_RECURRING_ROW_KEYWORDS = [
+    "sopravvenienz", "plusvalenz", "minusvalenz", "svalutazione",
+    "impairment", "write-off", "oneri straordinari", "proventi straordinari",
+    "componenti non ricorrenti", "oneri non ricorrenti",
+    "cessione", "ristrutturazione",
+]
+
 
 # ---------------------------------------------------------------------------
 # Classification target mapping
@@ -117,6 +124,11 @@ _CLASSIFICATION_MAP: dict[str, dict[str, str]] = {
     },
     "minority_interest": {
         "default": "patrimonio_netto",
+    },
+    "non_recurring": {
+        "provento": "proventi_oneri_straordinari",
+        "onere": "proventi_oneri_straordinari",
+        "default": "proventi_oneri_straordinari",
     },
 }
 
@@ -225,6 +237,7 @@ _EVIDENCE_KEYWORDS: dict[str, list[str]] = {
     "tax": _TAX_ROW_KEYWORDS,
     "receivable": _FACTORING_ROW_KEYWORDS,
     "minority_interest": _MINORITY_ROW_KEYWORDS,
+    "non_recurring": _NON_RECURRING_ROW_KEYWORDS,
 }
 
 
@@ -248,7 +261,7 @@ def collega_evidenze(bundle: ExtractionBundle) -> ExtractionBundle:
         ev_type = evidence.evidence_type
 
         # Skip document-level evidence without row-linking potential
-        if ev_type in ("going_concern", "accounting_policy", "non_recurring"):
+        if ev_type in ("going_concern", "accounting_policy"):
             continue
 
         # Strategy 1: match by note reference

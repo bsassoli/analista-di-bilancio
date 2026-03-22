@@ -599,59 +599,31 @@ def _riclassifica_deterministico(schema: dict, anno: str) -> dict:
 # Evidence-aware reclassification
 # ---------------------------------------------------------------------------
 
-def _build_hint_index(hints: list[ClassificationHint]) -> dict[str, list[ClassificationHint]]:
-    """Build a lookup: reclassification_target → list of hints."""
-    by_target: dict[str, list[ClassificationHint]] = {}
+# Rows whose classification can be rerouted by hints.
+# Maps fuzzy-match bucket → set of row_id patterns that could be rerouted.
+_REROUTABLE_PATTERNS: dict[str, list[str]] = {
+    "debiti_operativi": [
+        "fondi_rischi", "fondi_oneri", "altri_debiti", "debiti_diversi",
+        "passivit_fiscali", "debiti_tributari",
+    ],
+    "debiti_finanziari_lungo": [
+        "fondi_rischi", "fondi_oneri", "debiti_verso_banche",
+        "finanziamenti", "passivit_per_leasing",
+    ],
+    "debiti_finanziari_breve": [
+        "debiti_verso_banche", "debiti_verso_altri_finanziatori",
+    ],
+}
+
+
+def _build_hint_by_row(hints: list[ClassificationHint]) -> dict[str, ClassificationHint]:
+    """Build lookup: row_id → best (highest confidence) hint."""
+    by_row: dict[str, ClassificationHint] = {}
     for h in hints:
-        by_target.setdefault(h.suggested_classification, []).append(h)
-    return by_target
-
-
-def _hint_adjusted_value(
-    sp_voci: dict[str, int],
-    hint_index: dict[str, list[ClassificationHint]],
-    target_bucket: str,
-    base_value: int,
-) -> tuple[int, list[str]]:
-    """Adjust a reclassification value by adding amounts from hint-matched rows.
-
-    If hints suggest that certain rows (not already captured by fuzzy matching)
-    belong to target_bucket, add their values.
-
-    Returns:
-        (adjusted_value, list of deviation descriptions)
-    """
-    hints_for_bucket = hint_index.get(target_bucket, [])
-    if not hints_for_bucket:
-        return base_value, []
-
-    extra = 0
-    deviazioni = []
-    already_matched_ids: set[str] = set()
-
-    for h in hints_for_bucket:
-        row_id = h.target_row_id
-        if row_id in already_matched_ids:
-            continue
-        already_matched_ids.add(row_id)
-
-        # Check if this row is already included in the base value
-        # (i.e., fuzzy_get already matched it)
-        if row_id in sp_voci:
-            # The value exists — check if it was already counted
-            # We can't know for sure, so only add if confidence is high
-            # and the row wasn't matched by the fuzzy patterns
-            # For now, just log the hint as a deviation
-            deviazioni.append({
-                "tipo": f"hint_{target_bucket}",
-                "descrizione": (
-                    f"Hint semantico: '{row_id}' → {target_bucket} "
-                    f"(conf={h.confidence}, rationale={h.rationale_type})"
-                ),
-                "impatto": f"Riga suggerita per {target_bucket}",
-            })
-
-    return base_value + extra, deviazioni
+        rid = h.target_row_id
+        if rid not in by_row or h.confidence > by_row[rid].confidence:
+            by_row[rid] = h
+    return by_row
 
 
 def _riclassifica_con_evidenze(
@@ -661,54 +633,147 @@ def _riclassifica_con_evidenze(
 ) -> dict:
     """Evidence-aware reclassification.
 
-    Runs the standard deterministic reclassification, then adjusts
-    using classification hints from semantic evidence. Confidence
-    is boosted when evidence supports the mapping.
+    Runs deterministic reclassification, then applies hint-based adjustments:
+    - Reroutes ambiguous rows to the hint-suggested bucket
+    - Marks rows as unresolved if hints conflict with fuzzy mapping
+    - Penalizes confidence for weak/missing evidence, boosts for strong evidence
     """
-    # Start with standard deterministic result
     result = _riclassifica_deterministico(schema, anno)
 
     if not hints:
         return result
 
-    hint_index = _build_hint_index(hints)
+    hint_by_row = _build_hint_by_row(hints)
+    sp = result["sp_riclassificato"]
     deviazioni = result.get("deviazioni", [])
+    voci_non_mappate = result.get("voci_non_mappate", [])
 
-    # Track which buckets have evidence support
-    supported_buckets: set[str] = set()
-    hint_deviations: list = []
-
+    # Build row_id → value lookup
     sp_voci = {v["id"]: v.get("valore", {}).get(anno, 0) or 0
                for v in schema.get("sp", [])}
 
-    for target_bucket in hint_index:
-        _, bucket_devs = _hint_adjusted_value(
-            sp_voci, hint_index, target_bucket, 0,
-        )
-        hint_deviations.extend(bucket_devs)
-        if bucket_devs:
-            supported_buckets.add(target_bucket)
+    rerouted = 0
+    unresolved = 0
+    supported = 0
 
-    # Add hint deviations
-    if hint_deviations:
-        if isinstance(deviazioni, list):
-            deviazioni.extend(hint_deviations)
+    for row_id, hint in hint_by_row.items():
+        val = sp_voci.get(row_id, 0)
+        if val == 0:
+            continue  # no value to reroute
+
+        target = hint.suggested_classification
+
+        # Check: is this row currently in a DIFFERENT bucket than the hint suggests?
+        # We detect this by checking if the row_id matches a reroutable pattern
+        # for a bucket OTHER than the suggested one.
+        current_bucket = None
+        for bucket, patterns in _REROUTABLE_PATTERNS.items():
+            if any(p in row_id for p in patterns) and bucket != target:
+                current_bucket = bucket
+                break
+
+        if current_bucket is None:
+            # Row is either already in the right bucket or not reroutable
+            supported += 1
+            continue
+
+        # Reroute: only if confidence >= 0.7
+        if hint.confidence < 0.7:
+            unresolved += 1
+            voci_non_mappate.append(
+                f"{row_id}: hint suggerisce {target} (conf={hint.confidence}) "
+                f"ma confidence troppo bassa per reroute da {current_bucket}"
+            )
+            continue
+
+        # Apply the reroute
+        # Remove from current bucket
+        if current_bucket == "debiti_operativi":
+            sp["passivo"]["debiti_operativi"]["totale"] -= val
+        elif current_bucket == "debiti_finanziari_lungo":
+            sp["passivo"]["pfn"]["dettaglio"]["debiti_finanziari_lungo"] -= val
+        elif current_bucket == "debiti_finanziari_breve":
+            sp["passivo"]["pfn"]["dettaglio"]["debiti_finanziari_breve"] -= val
+
+        # Add to target bucket
+        if target == "debiti_finanziari_lungo":
+            sp["passivo"]["pfn"]["dettaglio"]["debiti_finanziari_lungo"] += val
+        elif target == "debiti_finanziari_breve":
+            sp["passivo"]["pfn"]["dettaglio"]["debiti_finanziari_breve"] += val
+        elif target == "debiti_operativi":
+            sp["passivo"]["debiti_operativi"]["totale"] += val
+
+        rerouted += 1
+        deviazioni.append({
+            "tipo": "reroute_semantico",
+            "descrizione": (
+                f"'{row_id}' ({val:,}€) spostato da {current_bucket} → {target} "
+                f"(conf={hint.confidence}, rationale={hint.rationale_type})"
+            ),
+            "impatto": f"Reclassificazione basata su evidenza semantica",
+        })
+
+    # Recalculate PFN totale after reroutes
+    if rerouted > 0:
+        pfn_det = sp["passivo"]["pfn"]["dettaglio"]
+        pfn_lungo = pfn_det.get("debiti_finanziari_lungo", 0)
+        pfn_breve = pfn_det.get("debiti_finanziari_breve", 0)
+        cassa = pfn_det.get("disponibilita_liquide_sottratte", 0)
+        sp["passivo"]["pfn"]["totale"] = calcola_pfn(pfn_lungo, pfn_breve, cassa)
+
+        # Recalculate CCON
+        ccon_det = sp["attivo"]["ccon"]["dettaglio"]
+        debiti_op = sp["passivo"]["debiti_operativi"]["totale"]
+        ccon_det["debiti_operativi_sottratti"] = debiti_op
+        sp["attivo"]["ccon"]["totale"] = calcola_ccon(
+            ccon_det.get("crediti_commerciali", 0),
+            ccon_det.get("rimanenze", 0),
+            ccon_det.get("altri_crediti_operativi", 0),
+            debiti_op,
+        )
 
     result["deviazioni"] = deviazioni
+    result["voci_non_mappate"] = voci_non_mappate
 
-    # Boost confidence if evidence supports key mappings
-    key_buckets = {
-        "debiti_finanziari_lungo", "debiti_finanziari_breve",
-        "debiti_operativi", "immobilizzazioni_materiali_nette",
+    # Confidence adjustment
+    confidence = result.get("confidence", 0.5)
+    if rerouted > 0:
+        confidence += min(rerouted * 0.02, 0.06)  # boost for evidence-based changes
+    if unresolved > 0:
+        confidence -= min(unresolved * 0.03, 0.1)  # penalize unresolved
+    if supported > 0:
+        confidence += min(supported * 0.01, 0.05)  # slight boost for confirmation
+    result["confidence"] = max(0.0, min(1.0, round(confidence, 2)))
+
+    result["n_hints_rerouted"] = rerouted
+    result["n_hints_unresolved"] = unresolved
+    result["n_hints_confirmed"] = supported
+
+    # Provenance: trace how each key bucket was determined
+    result["provenance"] = {
+        "metodo": "deterministico+evidenze",
+        "n_hints_totali": len(hints),
+        "reroutes": [
+            d for d in deviazioni
+            if isinstance(d, dict) and d.get("tipo") == "reroute_semantico"
+        ],
+        "unresolved": voci_non_mappate,
+        "confirmed_by_evidence": supported,
+        "bucket_sources": {
+            "debiti_finanziari_lungo": "fuzzy" + ("+hint" if any(
+                h.suggested_classification == "debiti_finanziari_lungo"
+                for h in hints
+            ) else ""),
+            "debiti_finanziari_breve": "fuzzy" + ("+hint" if any(
+                h.suggested_classification == "debiti_finanziari_breve"
+                for h in hints
+            ) else ""),
+            "debiti_operativi": "fuzzy" + ("+hint" if any(
+                h.suggested_classification == "debiti_operativi"
+                for h in hints
+            ) else ""),
+        },
     }
-    n_supported = len(supported_buckets & key_buckets)
-    if n_supported > 0:
-        confidence = result.get("confidence", 0.5)
-        boost = min(n_supported * 0.03, 0.1)
-        result["confidence"] = min(1.0, round(confidence + boost, 2))
-
-    result["n_hints_applied"] = len(hint_deviations)
-    result["supported_buckets"] = sorted(supported_buckets)
 
     return result
 

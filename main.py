@@ -109,6 +109,33 @@ def analizza_bilancio(
         print(f"      Severity: {qr.severity}")
         print(f"      Rows con valori: {qr.rows_with_values_pct:.0%}")
         print(f"      Copertura semantica: {sum(qr.semantic_coverage.values())}/{len(qr.semantic_coverage)}")
+
+        if qr.severity == "critical":
+            print("      STOP — qualità estrazione critica, impossibile procedere.")
+            print("      Dettagli:")
+            for section, found in qr.totals_found.items():
+                if not found:
+                    print(f"        - Totale {section} non trovato")
+            for anno, delta in qr.quadratura_delta.items():
+                if delta < 0:
+                    print(f"        - {anno}: totali mancanti")
+                elif delta > 0:
+                    print(f"        - {anno}: quadratura delta {delta:,.0f}")
+            elapsed = time.time() - t0
+            print(f"\n  Tempo: {elapsed:.1f}s")
+            return {
+                "errore": "qualita_estrazione_critica",
+                "quality_report": qr,
+                "azienda": azienda_nome,
+            }
+
+        if qr.severity == "warning":
+            # Propagate warning into schema metadata
+            schema.setdefault("metadata", {})["extraction_quality_warning"] = True
+            weak_areas = [k for k, v in qr.semantic_coverage.items() if not v]
+            if weak_areas:
+                schema["metadata"]["semantic_gaps"] = weak_areas
+                print(f"      [WARN] Copertura semantica debole: {', '.join(weak_areas)}")
         print()
 
     # --- Fase 5: Estrazione qualitativa legacy (LLM) ---

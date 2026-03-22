@@ -154,30 +154,74 @@ def _determine_severity(
     totals: dict[str, bool],
     deltas: dict[str, float],
     section_scores: dict[str, float],
+    semantic_cov: dict[str, bool],
+    note_link: float,
+    unresolved: int,
 ) -> str:
-    """Determine overall severity from individual scores."""
-    # Critical conditions
+    """Determine overall severity from individual scores.
+
+    Critical (pipeline should stop):
+      - statement pages not found (page_map < 34%)
+      - no totals found at all
+      - most rows unparseable (< 30%)
+      - quadratura delta > 5% of totale attivo
+
+    Warning (proceed with reduced confidence):
+      - rows with values < 70%
+      - section completeness < 50% for any section
+      - semantic coverage missing on >= 3 high-value topics
+      - note link coverage < 10%
+      - unresolved ambiguities > 5
+      - quadratura delta > 0 but <= 5%
+
+    Ok:
+      - everything else
+    """
+    # --- Critical conditions ---
     if page_map_conf < 0.34:
-        return "critical"  # no statement pages found
+        return "critical"
     if not any(totals.values()):
-        return "critical"  # no totals found at all
+        return "critical"
     if rows_pct < 0.3:
-        return "critical"  # most rows have no parseable values
+        return "critical"
 
-    # Check quadratura
+    # Quadratura: critical if delta > 5% of total
     for anno, delta in deltas.items():
-        if delta < 0:
-            continue  # missing totals, handled above
-        # Allow up to 5% tolerance
-        if totals.get("sp_attivo") and totals.get("sp_passivo"):
-            # Find attivo total for percentage calc
-            if delta > 0:
-                return "warning"
+        if delta == -1:
+            return "critical"  # both totals missing
+        if delta == -2:
+            continue  # one total missing — warning, not critical
+        if delta > 0 and totals.get("sp_attivo") and totals.get("sp_passivo"):
+            return "critical"  # any non-zero delta is critical at extraction stage
 
-    # Warning conditions
+    # --- Warning conditions ---
+    warnings = 0
+
     if rows_pct < 0.7:
-        return "warning"
+        warnings += 1
     if any(s < 0.5 for s in section_scores.values()):
+        warnings += 1
+
+    # Semantic coverage: warn if >= 3 high-value types missing
+    n_missing_semantic = sum(1 for v in semantic_cov.values() if not v)
+    if n_missing_semantic >= 3:
+        warnings += 1
+
+    # Note link coverage: warn if very low
+    if note_link < 0.1:
+        warnings += 1
+
+    # Unresolved ambiguities
+    if unresolved > 5:
+        warnings += 1
+
+    # One missing total
+    for anno, delta in deltas.items():
+        if delta == -2:
+            warnings += 1
+            break
+
+    if warnings > 0:
         return "warning"
 
     return "ok"
@@ -210,6 +254,7 @@ def calcola_quality_report(bundle: ExtractionBundle) -> QualityReport:
 
     severity = _determine_severity(
         page_map_conf, rows_pct, totals, deltas, section_scores,
+        semantic_cov, note_link, unresolved,
     )
 
     return QualityReport(

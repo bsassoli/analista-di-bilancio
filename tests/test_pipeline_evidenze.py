@@ -73,9 +73,10 @@ class TestRiclassificaConEvidenze:
 
         result = _riclassifica_con_evidenze(schema, "2024", hints)
 
-        # Should have hint deviations
-        assert result["n_hints_applied"] > 0
-        assert len(result["supported_buckets"]) > 0
+        # Should have hint results tracked
+        total_hints = result["n_hints_rerouted"] + result["n_hints_unresolved"] + result["n_hints_confirmed"]
+        assert total_hints > 0
+        assert "provenance" in result
 
     def test_confidence_boosted_with_evidence(self):
         schema = _schema_minimo()
